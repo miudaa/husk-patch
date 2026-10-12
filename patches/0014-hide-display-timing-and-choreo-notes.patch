@@ -1,0 +1,106 @@
+diff --git a/src/translation-layer-next/husk-tl-bionic-ndk.c b/src/translation-layer-next/husk-tl-bionic-ndk.c
+index 192b9fb..1c8a2cb 100644
+--- a/src/translation-layer-next/husk-tl-bionic-ndk.c
++++ b/src/translation-layer-next/husk-tl-bionic-ndk.c
+@@ -54,9 +54,11 @@ static void *b_ALooper_prepare(int opts) { (void)opts; if (!t_looper) t_looper =
+ static void *b_ALooper_forThread(void) { if (!t_looper && getenv("TL_LOOPER_TRACE")) { char nm[32] = ""; pthread_getname_np(pthread_self(), nm, sizeof(nm)); tl_log_line("looper: ALooper_forThread on '%s', which has none", nm); } return t_looper; }
+ static void b_ALooper_acquire(tl_looper *l) { if (l) atomic_fetch_add(&l->refs, 1); }
+ static void b_ALooper_release(tl_looper *l) { (void)l; }
++void tl_sync_note(const char *kind, const void *addr, long a, long b);
+ static void b_ALooper_wake(tl_looper *l)
+ {
+     if (!l) return;
++    tl_sync_note("looper-wake", l, 0, 0);
+     char c = 1;
+     (void)!write(l->wake[1], &c, 1);
+ }
+@@ -168,6 +170,7 @@ static int choreo_run(int fd, int events, void *data)
+     char buf[64];
+     while (read(fd, buf, sizeof(buf)) > 0) {}
+     int64_t now = atomic_load(&g_vsync_time);
++    tl_sync_note("choreo-run", c, 0, 0);
+     pthread_mutex_lock(&c->mu);
+     chcb *due = NULL, **keep = &c->pending;
+     for (chcb *cb = c->pending; cb;) {
+@@ -238,6 +241,7 @@ static void choreo_post(tl_choreo *c, int kind, void *fn, void *data, int64_t de
+ {
+     static int tr = -1; if (tr < 0) tr = getenv("TL_CHOREO_TRACE") ? 1 : 0;
+     if (tr) tl_log_line("choreographer: post kind %d on %p", kind, (void *)c);
++    tl_sync_note("choreo-post", c, kind, (long)delay_ms);
+     if (!c || !fn) return;
+     chcb *cb = calloc(1, sizeof(*cb));
+     cb->kind = kind; cb->fn = fn; cb->data = data;
+diff --git a/src/translation-layer-next/husk-tl-unity-app.c b/src/translation-layer-next/husk-tl-unity-app.c
+index 3164e24..b4213d8 100644
+--- a/src/translation-layer-next/husk-tl-unity-app.c
++++ b/src/translation-layer-next/husk-tl-unity-app.c
+@@ -169,6 +169,7 @@ static void stall_log_addr(const char *who, int i, uintptr_t a)
+ }
+ void tl_guest_threads_signal(int darwin_sig);
+ void tl_sync_enable(bool on);
++void tl_vk_hide_display_timing(bool on);
+ void tl_hle_set_unity_args(const char *args);
+ void tl_sync_dump(int n);
+ static void stall_dump_handler(int sig, siginfo_t *si, void *ctx)
+@@ -473,7 +474,7 @@ static void *launch_thread(void *arg)
+             void tl_egl_offscreen_windows(bool on);
+             bool vk = A.vulkan[0] && tl_manifest_vulkan_required(A.apk);
+             tl_log_line("unity: Vulkan %s (MoltenVK %s, manifest requires Vulkan: %s)", vk ? "on" : "off", A.vulkan[0] ? "present" : "absent", tl_manifest_vulkan_required(A.apk) ? "yes" : "no");
+-            if (vk) { setenv("TL_VK_TRACE", "1", 0); setenv("TL_THREAD_TRACE", "1", 0); setenv("TL_FILE_TRACE", "1", 0); tl_sync_enable(true);
++            if (vk) { if (!getenv("TL_VK_KEEP_DT")) tl_vk_hide_display_timing(true); setenv("TL_VK_TRACE", "1", 0); setenv("TL_THREAD_TRACE", "1", 0); setenv("TL_FILE_TRACE", "1", 0); tl_sync_enable(true);
+                 tl_hle_set_unity_args("-force-gfx-direct"); tl_vk_configure(A.vulkan, NULL, 0); tl_egl_offscreen_windows(true); }
+         }
+         tl_audio_install();
+diff --git a/src/translation-layer-next/husk-tl-vulkan.m b/src/translation-layer-next/husk-tl-vulkan.m
+index 157e2ee..fb7c64e 100644
+--- a/src/translation-layer-next/husk-tl-vulkan.m
++++ b/src/translation-layer-next/husk-tl-vulkan.m
+@@ -424,17 +424,27 @@ static bool real_dev_ext(void *pd, const char *name)
+     return found;
+ }
+ 
++/* Swappy (Unity's frame pacing) is told the device has no VK_GOOGLE_display_timing, so it takes its fallback pacing instead of the display-timing one. */
++static bool g_hide_dt;
++void tl_vk_hide_display_timing(bool on) { g_hide_dt = on; }
++static const char k_dt_name[] = "VK_GOOGLE_display_timing";
++
+ static int w_vkEnumerateDeviceExtensionProperties(void *pd, const char *layer, uint32_t *count, vk_ext_props *props)
+ {
+     if (!g_real_enum_dev_ext) return -3;
+-    if (layer || !dxvk_game()) return g_real_enum_dev_ext(pd, layer, count, props);
++    if (layer || (!dxvk_game() && !g_hide_dt)) return g_real_enum_dev_ext(pd, layer, count, props);
+     uint32_t n = 0;
+     int r = g_real_enum_dev_ext(pd, NULL, &n, NULL);
+     if (r != VK_SUCCESS) return r;
+     vk_ext_props *all = calloc(n + N_FAKE_EXT + 1, sizeof(*all));
+     g_real_enum_dev_ext(pd, NULL, &n, all);
+     uint32_t total = n;
+-    for (size_t i = 0; i < N_FAKE_EXT; i++) {
++    if (g_hide_dt) {
++        uint32_t k2 = 0;
++        for (uint32_t j = 0; j < total; j++) if (strcmp(all[j].name, k_dt_name)) all[k2++] = all[j];
++        total = k2; n = k2;
++    }
++    for (size_t i = 0; dxvk_game() && i < N_FAKE_EXT; i++) {
+         bool have = false;
+         for (uint32_t j = 0; j < n; j++) if (!strcmp(all[j].name, k_fake_ext[i].name)) have = true;
+         if (!have) { snprintf(all[total].name, sizeof(all[total].name), "%s", k_fake_ext[i].name); all[total].specVersion = 1; total++; }
+@@ -639,7 +649,17 @@ static pfn_create_device g_real_create_device;
+ static int w_vkCreateDevice(void *pd, const vk_device_ci *ci, const void *alloc, void **out)
+ {
+     if (!g_real_create_device) return -3;
+-    if (!dxvk_game()) return g_real_create_device(pd, ci, alloc, out);
++    if (!dxvk_game()) {
++        if (!g_hide_dt) return g_real_create_device(pd, ci, alloc, out);
++        vk_device_ci hidden = *ci;
++        const char **keep = calloc(ci->extCount + 1, sizeof(char *));
++        uint32_t m = 0;
++        for (uint32_t i = 0; i < ci->extCount; i++) if (strcmp(ci->exts[i], k_dt_name)) keep[m++] = ci->exts[i]; else tl_log_line("vulkan: device extension %s left out (hidden)", k_dt_name);
++        hidden.extCount = m; hidden.exts = keep;
++        int hr = g_real_create_device(pd, &hidden, alloc, out);
++        free(keep);
++        return hr;
++    }
+     uint32_t base[N_FEATURES], saved1[8], saved2[8];
+     vk_device_ci copy = *ci;
+     if (ci->features) { memcpy(base, ci->features, sizeof(base)); unclaim(pd, base, saved1); copy.features = base; }

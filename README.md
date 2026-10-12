@@ -20,6 +20,7 @@ Husk は GPL-2.0-or-later です。このリポジトリにはパッチ（`patch
 | `patches/0011-bundle-getstring-default.patch` | 0010 の続き。Unity は `Bundle.getString(key, default)` の 2 引数版で引数を読むので、そちらも実装した。 |
 | `patches/0012-file-trace.patch` | 診断用。Unity の Vulkan ビルドで TL_FILE_TRACE を有効にし、ゲームが open / stat しようとしたファイルと結果（ENOENT など）をログに残す。 |
 | `patches/0013-etc-fonts-xml.patch` | `/etc/fonts.xml` と `/etc/font_fallback.xml`（実機では `/etc` が `/system/etc` へのリンク）も、アプリが持つフォント一覧に繋ぐ。Unity のフォント管理は `/etc/fonts.xml` を最初に開く。 |
+| `patches/0014-hide-display-timing-and-choreo-notes.patch` | 実験。Vulkan 専用の Unity ビルドには `VK_GOOGLE_display_timing` を見せず（Swappy が別のフレームペーシング実装を使う）、Choreographer のコールバック登録・実行と Looper の wake を同期リングに記録する。 |
 
 ## IPA の作り方
 
