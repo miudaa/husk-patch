@@ -1,0 +1,24 @@
+diff --git a/src/translation-layer-next/husk-tl-jni-hle.c b/src/translation-layer-next/husk-tl-jni-hle.c
+index d59210b..bdd3c37 100644
+--- a/src/translation-layer-next/husk-tl-jni-hle.c
++++ b/src/translation-layer-next/husk-tl-jni-hle.c
+@@ -731,6 +731,11 @@ static void SP_getAll(tl_jcall *c) { c->ret = vl(make("java/util/HashMap")); }
+ static char g_unity_args[256];
+ void tl_hle_set_unity_args(const char *args) { snprintf(g_unity_args, sizeof(g_unity_args), "%s", args ? args : ""); }
+ static void Intent_getExtras(tl_jcall *c) { c->ret = vl(g_unity_args[0] ? make("android/os/Bundle") : NULL); }
++static void Bundle_containsKey(tl_jcall *c)
++{
++    const char *key = c->args[0].l ? S(c->args[0].l) : "";
++    c->ret = vz(g_unity_args[0] && !strcmp(key, "unity"));
++}
+ static void Bundle_getString(tl_jcall *c)
+ {
+     const char *key = c->args[0].l ? S(c->args[0].l) : "";
+@@ -1045,6 +1050,7 @@ static const tl_jhle k_hle[] = {
+     M("java/util/HashSet", "size", "()I", Coll_size), M("java/util/Set", "size", "()I", Coll_size),
+     M("android/content/SharedPreferences", "getAll", "()Ljava/util/Map;", SP_getAll),
+     M("android/content/Intent", "getExtras", "()Landroid/os/Bundle;", Intent_getExtras),
++    M("android/os/Bundle", "containsKey", "(Ljava/lang/String;)Z", Bundle_containsKey),
+     M("android/os/Bundle", "getString", "(Ljava/lang/String;)Ljava/lang/String;", Bundle_getString),
+     M("android/content/Context", "getObbDir", "()Ljava/io/File;", Context_getObbDir), M("android/content/Context", "getObbDirs", "()[Ljava/io/File;", Context_getObbDirs),
+     M("android/app/Activity", "setRequestedOrientation", "(I)V", Activity_setRequestedOrientation),
