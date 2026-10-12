@@ -109,6 +109,19 @@ jobs:
           bzip2 -c "$APP/edk2-aarch64-code.fd" > third_party/build/qemu-10.0.12-utm/pc-bios/edk2-aarch64-code.fd.bz2
           du -sh build guests third_party
 
+      - name: Add the Noto CJK font (Husk leaves it out of android-system to save 58 MB; Japanese text needs it)
+        if: env.MODE == 'fast'
+        run: |
+          set -euo pipefail
+          cd husk
+          F=build/android-system/fonts/NotoSansCJK-Regular.ttc
+          if curl -fL --retry 3 --max-time 300 -o "$F" "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTC/NotoSansCJK-Regular.ttc"; then
+            ls -la "$F"
+          else
+            rm -f "$F"
+            echo "::warning::could not download NotoSansCJK-Regular.ttc; Japanese text will not show"
+          fi
+
       - name: On-device pairing library (Rust)
         if: env.MODE == 'fast'
         run: |

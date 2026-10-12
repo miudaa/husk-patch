@@ -29,6 +29,7 @@ Husk は GPL-2.0-or-later です。このリポジトリにはパッチ（`patch
 | `patches/0020-log-system-features.patch` | 診断用。`hasSystemFeature` に渡された機能名と返した値をログに出す。 |
 | `patches/0021-trace-startup-feature-query.patch` | 診断用。起動時に名前が読めない `hasSystemFeature` が呼ばれる（引数の種類をログに出し、直後0.4秒間の Java 呼び出しを記録する）。 |
 | `patches/0022-touchscreen-in-device-list.patch` | 修正案。タッチが効かない件。エンジンは端末の入力デバイス一覧（`InputDevice.getDeviceIds`）にタッチスクリーンがあるかでタッチ対応を決めるため、一覧にタッチスクリーン（ID 5）を加え、タッチのイベントの `getDeviceId` も 5 にそろえる。 |
+| `patches/0023-mix-audio-sources.patch` | 修正案。音ズレ・太鼓の音が鳴らない件。同時に動く複数の音源（Unity の FMOD、ゲームの FMOD、CRI）がホストの音声に順番に追記されていたので、音源ごとの位置に足し合わせる（ミックスする）方式に変え、音源が先に書ける量を3バースト分（約65ms）に抑えて遅延も減らす。 |
 
 ## IPA の作り方
 

@@ -1,0 +1,87 @@
+diff --git a/src/translation-layer-next/husk-tl-audio.c b/src/translation-layer-next/husk-tl-audio.c
+index 96bca75..0d8092e 100644
+--- a/src/translation-layer-next/husk-tl-audio.c
++++ b/src/translation-layer-next/husk-tl-audio.c
+@@ -16,6 +16,7 @@
+ #define NBUF 3
+ #define FRAMES_PER_BUF 1024
+ #define RING_FRAMES 8192
++#define MAX_AHEAD 3072       /* how far past what has been played one source may write: three bursts, so a source lags the speakers by about 65 ms */
+ 
+ static struct {
+     pthread_mutex_t mu;
+@@ -23,26 +24,31 @@ static struct {
+     AudioQueueRef q;
+     AudioQueueBufferRef bufs[NBUF];
+     int rate, channels;
+-    int16_t *ring;
+-    size_t head, count;           /* frames */
++    int16_t *ring;                /* the mix of every source, by frame number since the start, modulo RING_FRAMES; a played frame is zeroed */
++    uint64_t consumed;            /* frames the speakers have taken */
+     bool paused, failed;
+ } A = { .mu = PTHREAD_MUTEX_INITIALIZER, .cv = PTHREAD_COND_INITIALIZER };
+ 
+-/* The audio thread asks for samples; an empty ring is silence, never a wait. */
++/* The audio thread asks for samples. Every source (a game can run several mixers at once: Unity's own FMOD, the game's FMOD, CRI) has added its
++ * frames into the ring at its own position; what is not yet written is silence, never a wait. */
+ static void on_buffer(void *user, AudioQueueRef q, AudioQueueBufferRef b)
+ {
+     (void)user;
+     int16_t *out = b->mAudioData;
+     size_t want = FRAMES_PER_BUF, ch = (size_t)A.channels;
+     pthread_mutex_lock(&A.mu);
+-    size_t take = A.paused ? 0 : (A.count < want ? A.count : want);
+-    for (size_t i = 0; i < take; i++)
+-        for (size_t c = 0; c < ch; c++) out[i * ch + c] = A.ring[((A.head + i) % RING_FRAMES) * ch + c];
+-    A.head = (A.head + take) % RING_FRAMES;
+-    A.count -= take;
++    if (A.paused) memset(out, 0, want * ch * sizeof(int16_t));
++    else {
++        for (size_t i = 0; i < want; i++)
++            for (size_t c = 0; c < ch; c++) {
++                int16_t *slot = &A.ring[((A.consumed + i) % RING_FRAMES) * ch + c];
++                out[i * ch + c] = *slot;
++                *slot = 0;
++            }
++        A.consumed += want;
++    }
+     pthread_cond_broadcast(&A.cv);
+     pthread_mutex_unlock(&A.mu);
+-    if (take < want) memset(out + take * ch, 0, (want - take) * ch * sizeof(int16_t));
+     b->mAudioDataByteSize = (UInt32)(want * ch * sizeof(int16_t));
+     AudioQueueEnqueueBuffer(q, b, 0, NULL);
+ }
+@@ -108,20 +114,27 @@ static void host_write(const int16_t *samples, int frames, int channels, int rat
+     ring_write(samples, frames, channels, rate);
+ }
+ 
+-/* Copy into the ring, blocking while it is full (that is the pacing). */
++/* Add into the ring at this source's own position (one source is one thread), blocking while it is MAX_AHEAD past the speakers: that is the pacing.
++ * Two sources playing at once are mixed, not played one after the other. */
+ static void ring_write(const int16_t *samples, int frames, int channels, int rate)
+ {
++    static __thread uint64_t pos;
++    static __thread bool started;
+     pthread_mutex_lock(&A.mu);
+     if (!A.q && !A.failed) { if (!open_queue(rate, channels)) A.failed = true; }
+     if (A.failed || channels != A.channels) { pthread_mutex_unlock(&A.mu); sleep_for(frames, rate); return; }
+     int done = 0;
+     while (done < frames) {
+-        while (A.count >= RING_FRAMES || A.paused) pthread_cond_wait(&A.cv, &A.mu);
+-        size_t room = RING_FRAMES - A.count, n = (size_t)(frames - done) < room ? (size_t)(frames - done) : room;
+-        size_t tail = (A.head + A.count) % RING_FRAMES;
++        while (A.paused || (started && pos > A.consumed && pos - A.consumed >= MAX_AHEAD)) pthread_cond_wait(&A.cv, &A.mu);
++        if (!started || pos < A.consumed) { pos = A.consumed; started = true; }          /* new, or it fell behind: play from now */
++        size_t room = MAX_AHEAD - (size_t)(pos - A.consumed), n = (size_t)(frames - done) < room ? (size_t)(frames - done) : room;
+         for (size_t i = 0; i < n; i++)
+-            memcpy(&A.ring[((tail + i) % RING_FRAMES) * (size_t)channels], &samples[(size_t)(done + (int)i) * (size_t)channels], (size_t)channels * sizeof(int16_t));
+-        A.count += n;
++            for (int c = 0; c < channels; c++) {
++                int16_t *slot = &A.ring[((pos + i) % RING_FRAMES) * (size_t)channels + (size_t)c];
++                int v = *slot + samples[(size_t)(done + (int)i) * (size_t)channels + (size_t)c];
++                *slot = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
++            }
++        pos += n;
+         done += (int)n;
+     }
+     pthread_mutex_unlock(&A.mu);
