@@ -26,6 +26,7 @@ Husk は GPL-2.0-or-later です。このリポジトリにはパッチ（`patch
 | `patches/0017-touchscreen-input-device.patch` | 修正案。タッチ入力が効かない件。Unity が `InputEvent.getDevice()` を呼んで null を受け取っていたので、タッチスクリーンの `InputDevice`（ソース 0x1002）を返す。あわせて最初の数回のタッチの結果をログに出す。 |
 | `patches/0018-trace-jni-during-touch.patch` | 診断用。最初の3回のタッチを渡している間だけ、エンジンが行う Java 呼び出しをすべてログに出す（何を読みに来て、何を返されているか）。 |
 | `patches/0019-touchscreen-system-feature.patch` | 修正案。`PackageManager.hasSystemFeature` が常に false を返していて、Unity が最初のタッチで「タッチスクリーンなし」と判断してタッチを無視していた。touchscreen / multitouch / faketouch には true を返す。 |
+| `patches/0020-log-system-features.patch` | 診断用。`hasSystemFeature` に渡された機能名と返した値をログに出す。 |
 
 ## IPA の作り方
 
