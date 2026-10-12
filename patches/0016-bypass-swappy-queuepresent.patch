@@ -1,0 +1,100 @@
+diff --git a/src/translation-layer-next/husk-tl-ld.c b/src/translation-layer-next/husk-tl-ld.c
+index 9b05eda..1e356ac 100644
+--- a/src/translation-layer-next/husk-tl-ld.c
++++ b/src/translation-layer-next/husk-tl-ld.c
+@@ -455,6 +455,18 @@ void *tl_ld_sym_deep(tl_lib *lib, const char *name, tl_lib **found_in)
+     return NULL;
+ }
+ 
++/* Overwrite n instructions of a library's code, only if they are what the caller expects (a build it knows). */
++bool tl_ld_patch_code(tl_lib *L, uint64_t vaddr, const uint32_t *expect, const uint32_t *words, int n)
++{
++    if (!L || vaddr < L->base_vaddr) return false;
++    uint32_t *rw = (uint32_t *)(L->rw + (vaddr - L->base_vaddr));
++    const uint8_t *rx = L->rx + (vaddr - L->base_vaddr);
++    for (int i = 0; i < n; i++) if (rw[i] != expect[i]) return false;
++    for (int i = 0; i < n; i++) rw[i] = words[i];
++    tl_xmem_flush(rx, (size_t)n * 4);
++    return true;
++}
++
+ /* Where the library's vaddr 0 lies in the executable view: what dladdr calls its base. */
+ void *tl_ld_lib_base(const tl_lib *L) { return L ? (void *)(L->rx - L->base_vaddr) : NULL; }
+ 
+diff --git a/src/translation-layer-next/husk-tl-ld.h b/src/translation-layer-next/husk-tl-ld.h
+index 03acc78..15ce60e 100644
+--- a/src/translation-layer-next/husk-tl-ld.h
++++ b/src/translation-layer-next/husk-tl-ld.h
+@@ -75,6 +75,7 @@ void *tl_ld_sym_deep(tl_lib *lib, const char *name, tl_lib **found_in);   /* the
+ /* The library an address belongs to (either view), and the nearest exported symbol. */
+ tl_lib *tl_ld_lib_of(const void *addr);
+ void *tl_ld_lib_base(const tl_lib *lib);
++bool tl_ld_patch_code(tl_lib *lib, uint64_t vaddr, const uint32_t *expect, const uint32_t *words, int n);
+ const char *tl_ld_lib_name(const tl_lib *lib);
+ const char *tl_ld_symbol_at(const void *addr, const char **lib_name, const void **sym_addr);
+ 
+diff --git a/src/translation-layer-next/husk-tl-unity-app.c b/src/translation-layer-next/husk-tl-unity-app.c
+index 5dcde41..21c1a60 100644
+--- a/src/translation-layer-next/husk-tl-unity-app.c
++++ b/src/translation-layer-next/husk-tl-unity-app.c
+@@ -344,6 +344,21 @@ static void *java_boot(void *arg)
+     return NULL;
+ }
+ 
++/* Swappy (the frame pacer built into Unity 2020's libunity) stops the engine thread for good in SwappyVk_queuePresent: it waits on a result that a pool
++ * thread never delivers, after three frames. Presenting straight to Vulkan costs only the pacing (the display link paces it already). Only a build whose
++ * first instructions are the ones this was written for is touched; TL_SWAPPY_KEEP leaves it alone. */
++int tl_vk_present_direct(void *queue, const void *info);
++static void unity_bypass_swappy(void)
++{
++    if (getenv("TL_SWAPPY_KEEP")) return;
++    tl_lib *L = tl_ld_find_lib("libunity.so");
++    static const uint32_t expect[4] = { 0xf81e0ff4u, 0xa9017bf3u, 0xaa0103f3u, 0xf0002d81u };   /* SwappyVk_queuePresent of Unity 2020.3.33 */
++    uint64_t to = (uint64_t)(uintptr_t)tl_vk_present_direct;
++    uint32_t words[4] = { 0x58000050u, 0xd61f0200u, (uint32_t)to, (uint32_t)(to >> 32) };      /* ldr x16, #8 ; br x16 ; .quad target */
++    bool done = tl_ld_patch_code(L, 0xe0d7c8, expect, words, 4);
++    tl_log_line("unity: SwappyVk_queuePresent %s", done ? "now presents directly" : L ? "left as it is (not the build this knows)" : "not found (libunity.so is not loaded)");
++}
++
+ static void *launch_thread(void *arg)
+ {
+     (void)arg;
+@@ -361,6 +376,7 @@ static void *launch_thread(void *arg)
+     if (A.engine == ENGINE_UNITY) tl_unity_register_pad_sink();
+     else if (A.engine == ENGINE_COCOS) tl_cocos_register_pad_sink();
+ 
++    bool vk = false;
+     bool ok;
+     if (A.engine == ENGINE_GAMEACTIVITY) {
+         tl_ga_config cfg = {
+@@ -473,13 +489,15 @@ static void *launch_thread(void *arg)
+         {
+             int tl_manifest_vulkan_required(const char *apk);
+             void tl_egl_offscreen_windows(bool on);
+-            bool vk = A.vulkan[0] && tl_manifest_vulkan_required(A.apk);
++            vk = A.vulkan[0] && tl_manifest_vulkan_required(A.apk);
+             tl_log_line("unity: Vulkan %s (MoltenVK %s, manifest requires Vulkan: %s)", vk ? "on" : "off", A.vulkan[0] ? "present" : "absent", tl_manifest_vulkan_required(A.apk) ? "yes" : "no");
+             if (vk) { if (!getenv("TL_VK_KEEP_DT")) tl_vk_hide_display_timing(true); tl_vk_trace_fences(true); setenv("TL_VK_TRACE", "1", 0); setenv("TL_THREAD_TRACE", "1", 0); setenv("TL_FILE_TRACE", "1", 0); tl_sync_enable(true);
+                 tl_hle_set_unity_args("-force-gfx-direct"); tl_vk_configure(A.vulkan, NULL, 0); tl_egl_offscreen_windows(true); }
+         }
+         tl_audio_install();
+-        ok = tl_unity_start(&cfg) && tl_unity_run();
++        ok = tl_unity_start(&cfg);
++        if (ok && vk) unity_bypass_swappy();
++        ok = ok && tl_unity_run();
+     }
+     if (!ok) {
+         tl_log_line("native: the game could not be started");
+diff --git a/src/translation-layer-next/husk-tl-vulkan.m b/src/translation-layer-next/husk-tl-vulkan.m
+index f88bdf4..76b13a9 100644
+--- a/src/translation-layer-next/husk-tl-vulkan.m
++++ b/src/translation-layer-next/husk-tl-vulkan.m
+@@ -352,6 +352,8 @@ static int w_vkQueuePresentKHR(void *queue, const void *info)
+     return r;
+ }
+ 
++/* For a guest patched to present without Swappy (see husk-tl-unity-app.c): the same present as the game's own vkQueuePresentKHR. */
++int tl_vk_present_direct(void *queue, const void *info) { return w_vkQueuePresentKHR(queue, info); }
+ 
+ /* ------------------------------------------------------------ Direct3D 11 features over Metal */
+ /*
