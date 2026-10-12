@@ -1,0 +1,29 @@
+diff --git a/src/translation-layer-next/husk-tl-jni-hle.c b/src/translation-layer-next/husk-tl-jni-hle.c
+index 56a1b56..ca49b3e 100644
+--- a/src/translation-layer-next/husk-tl-jni-hle.c
++++ b/src/translation-layer-next/husk-tl-jni-hle.c
+@@ -213,6 +213,7 @@ static void WindowManager_getDefaultDisplay(tl_jcall *c) { c->ret = vl(H.display
+ /* ----------------------------------------------------- package information */
+ 
+ static void PM_getApplicationInfo(tl_jcall *c) { c->ret = vl(H.appinfo); }
++static void *trace_off_later(void *arg) { (void)arg; usleep(400000); tl_jni_set_trace(0); return NULL; }
+ static void PM_hasSystemFeature(tl_jcall *c)
+ {
+     const char *f = S(c->args[0].l);
+@@ -220,6 +221,16 @@ static void PM_hasSystemFeature(tl_jcall *c)
+     c->ret = vz(!strcmp(f, "android.hardware.touchscreen") || !strcmp(f, "android.hardware.touchscreen.multitouch")
+              || !strcmp(f, "android.hardware.touchscreen.multitouch.distinct") || !strcmp(f, "android.hardware.faketouch"));
+     { static int said; if (said < 40) { said++; tl_log_line("jni: hasSystemFeature(%s) -> %d", f, c->ret.z); } }
++    /* The call at start-up names nothing readable: say what the argument is, and record the Java calls that follow it for a moment. */
++    if (!*f) {
++        static int dug;
++        const jobj *a = c->args[0].l;
++        if (!dug++) {
++            tl_log_line("jni: hasSystemFeature argument: %s, kind %d, class %s", a ? "an object" : "null", a ? (int)a->kind : -1, a ? tl_jni_class_name(a) : "-");
++            tl_jni_set_trace(2);
++            pthread_t t; pthread_create(&t, NULL, trace_off_later, NULL); pthread_detach(t);
++        }
++    }
+ }
+ static void PM_getPackageInfo(tl_jcall *c)
+ {

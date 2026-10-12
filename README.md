@@ -27,6 +27,7 @@ Husk は GPL-2.0-or-later です。このリポジトリにはパッチ（`patch
 | `patches/0018-trace-jni-during-touch.patch` | 診断用。最初の3回のタッチを渡している間だけ、エンジンが行う Java 呼び出しをすべてログに出す（何を読みに来て、何を返されているか）。 |
 | `patches/0019-touchscreen-system-feature.patch` | 修正案。`PackageManager.hasSystemFeature` が常に false を返していて、Unity が最初のタッチで「タッチスクリーンなし」と判断してタッチを無視していた。touchscreen / multitouch / faketouch には true を返す。 |
 | `patches/0020-log-system-features.patch` | 診断用。`hasSystemFeature` に渡された機能名と返した値をログに出す。 |
+| `patches/0021-trace-startup-feature-query.patch` | 診断用。起動時に名前が読めない `hasSystemFeature` が呼ばれる（引数の種類をログに出し、直後0.4秒間の Java 呼び出しを記録する）。 |
 
 ## IPA の作り方
 
