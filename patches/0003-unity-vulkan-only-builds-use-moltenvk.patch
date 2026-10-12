@@ -1,0 +1,84 @@
+diff --git a/src/app/Husk/TLUnityView.swift b/src/app/Husk/TLUnityView.swift
+index 9993e0b..cb73e19 100644
+--- a/src/app/Husk/TLUnityView.swift
++++ b/src/app/Husk/TLUnityView.swift
+@@ -321,7 +321,10 @@ final class TLUnityUIView: UIView, UIKeyInput {
+             }
+             started = husk_flutter_launch(apk, dataDir, layerPtr, Int32(width), Int32(height), angle, ca)
+         case .minecraft: started = husk_gameactivity_launch(apk, dataDir, layerPtr, Int32(width), Int32(height), angle, ca)
+-        case .unity: started = husk_unity_launch(apk, dataDir, layerPtr, Int32(width), Int32(height), angle, ca)
++        case .unity:
++            // MoltenVK for a Unity build that has Vulkan as its only graphics API; the native runtime decides from the manifest whether to use it.
++            if let fw = Bundle.main.privateFrameworksPath { husk_ue4_set_vulkan(fw + "/MoltenVK.framework/MoltenVK") }
++            started = husk_unity_launch(apk, dataDir, layerPtr, Int32(width), Int32(height), angle, ca)
+         }
+         if !started { HuskLog.log("tl", "native: launch refused") }
+     }
+diff --git a/src/translation-layer-next/husk-tl-sdl.c b/src/translation-layer-next/husk-tl-sdl.c
+index e131d72..576f007 100644
+--- a/src/translation-layer-next/husk-tl-sdl.c
++++ b/src/translation-layer-next/husk-tl-sdl.c
+@@ -734,6 +734,42 @@ int tl_manifest_gles(const char *apk)
+     return best;
+ }
+ 
++/* 1 if the manifest asks for <uses-feature android:name="android.hardware.vulkan.version"> as a requirement (no android:required, or true).
++ * Unity writes it that way when Vulkan is the only graphics API a build has; with OpenGL ES also in the build it is marked required=false. */
++int tl_manifest_vulkan_required(const char *apk)
++{
++    tl_zip z; char err[160]; int found = 0;
++    if (!tl_zip_open(&z, apk, err, sizeof(err))) return 0;
++    const tl_zip_entry *e = tl_zip_find(&z, "AndroidManifest.xml");
++    const uint8_t *data; size_t len; bool owned = false;
++    if (e && tl_zip_data(&z, e, 8u << 20, &data, &len, &owned, err, sizeof(err)) && len > 8) {
++        const uint8_t *pool = NULL; size_t pool_size = 0;
++        for (size_t off = (size_t)(data[2] | (data[3] << 8)); off + 8 <= len; ) {
++            uint16_t type = (uint16_t)(data[off] | (data[off + 1] << 8)); uint32_t size = rd32(data + off + 4);
++            if (size < 8 || off + size > len) break;
++            if (type == 0x0001) { pool = data + off; pool_size = size; }
++            else if (type == 0x0102 && pool && off + 36 <= len) {
++                const uint8_t *el = data + off; char tag[24];
++                if (axml_string(pool, pool_size, rd32(el + 20), tag, sizeof(tag)) && !strcmp(tag, "uses-feature")) {
++                    uint16_t astart = (uint16_t)(el[24] | (el[25] << 8)), asize = (uint16_t)(el[26] | (el[27] << 8)), acount = (uint16_t)(el[28] | (el[29] << 8));
++                    bool vulkan = false, optional = false;
++                    for (unsigned i = 0; i < acount; i++) {
++                        const uint8_t *at = el + 16 + astart + (size_t)i * asize; char an[32], av[48];
++                        if (at + 20 > data + len || !axml_string(pool, pool_size, rd32(at + 4), an, sizeof(an))) continue;
++                        if (!strcmp(an, "name")) { if (axml_string(pool, pool_size, rd32(at + 8), av, sizeof(av)) && !strcmp(av, "android.hardware.vulkan.version")) vulkan = true; }
++                        else if (!strcmp(an, "required") && at[15] == 0x12 && rd32(at + 16) == 0) optional = true;
++                    }
++                    if (vulkan && !optional) found = 1;
++                }
++            }
++            off += size;
++        }
++    }
++    if (owned) free((void *)data);
++    tl_zip_close(&z);
++    return found;
++}
++
+ bool tl_sdl_start(const tl_ga_config *cfg, const char *activity_class)
+ {
+     S.cfg = *cfg;
+diff --git a/src/translation-layer-next/husk-tl-unity-app.c b/src/translation-layer-next/husk-tl-unity-app.c
+index c202acc..58ae0be 100644
+--- a/src/translation-layer-next/husk-tl-unity-app.c
++++ b/src/translation-layer-next/husk-tl-unity-app.c
+@@ -398,6 +398,16 @@ static void *launch_thread(void *arg)
+             .metal_layer = A.layer, .angle_egl = A.angle, .angle_gles = NULL, .frame_dir = NULL, .frame_every = 0,
+         };
+         tl_log_line("unity: starting %s as %s, %dx%d", A.apk, A.package, A.width, A.height);
++        /* A Unity build with Vulkan as its only graphics API has no OpenGL ES shaders, and its engine, finding no libvulkan.so, ends in "Your device
++         * does not match the hardware requirements" with no frame drawn. It is given MoltenVK, as Unreal and the SDL games are; a build that also
++         * has OpenGL ES keeps ANGLE. */
++        {
++            int tl_manifest_vulkan_required(const char *apk);
++            void tl_egl_offscreen_windows(bool on);
++            bool vk = A.vulkan[0] && tl_manifest_vulkan_required(A.apk);
++            tl_log_line("unity: Vulkan %s (MoltenVK %s, manifest requires Vulkan: %s)", vk ? "on" : "off", A.vulkan[0] ? "present" : "absent", tl_manifest_vulkan_required(A.apk) ? "yes" : "no");
++            if (vk) { tl_vk_configure(A.vulkan, NULL, 0); tl_egl_offscreen_windows(true); }
++        }
+         tl_audio_install();
+         ok = tl_unity_start(&cfg) && tl_unity_run();
+     }
