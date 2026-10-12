@@ -1,0 +1,170 @@
+name: Build patched Husk IPA
+
+# Builds Leviidev/Husk at a pinned ref with the patches in ./patches applied.
+#
+# mode=fast (default): the heavy native pieces (QEMU, ANGLE, MoltenVK, the guest
+#   kernel, the Java runtime) are taken from the official release IPA, which was
+#   built from the same ref, and only the app itself -- where the Translation
+#   Layer lives -- is rebuilt. Minutes, not hours.
+# mode=full: scripts/ci_build.sh from a clean checkout, as upstream documents.
+#   Hours; the job limit on GitHub-hosted runners is 6.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "fast = reuse the official release's prebuilt libraries; full = build everything"
+        type: choice
+        options: [fast, full]
+        default: fast
+      upstream_ref:
+        description: "Leviidev/Husk tag or commit to patch"
+        default: "2.0"
+      publish:
+        description: "Also publish the IPA as a GitHub release"
+        type: boolean
+        default: true
+  push:
+    branches: [claude/translation-layer-rendering-fix-wsn22t]
+    paths: ["patches/**", ".github/workflows/build-ipa.yml"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UPSTREAM_REPO: Leviidev/Husk
+  UPSTREAM_REF: ${{ inputs.upstream_ref || '2.0' }}
+  MODE: ${{ inputs.mode || 'fast' }}
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 350
+    steps:
+      - name: Checkout patches
+        uses: actions/checkout@v4
+
+      - name: Checkout upstream Husk
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ env.UPSTREAM_REF }}
+          path: husk
+
+      - name: Apply patches
+        run: |
+          set -euo pipefail
+          cd husk
+          for p in ../patches/*.patch; do
+            echo "==> $p"
+            git apply --check "$p"
+            git apply "$p"
+          done
+          git status --short
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          ls /Applications | grep -i '^Xcode' || true
+          # The JIT helper extension targets iOS 26, so the newest installed Xcode is wanted.
+          XC="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)"
+          if [ -n "$XC" ]; then sudo xcode-select -s "$XC"; fi
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Tools
+        run: |
+          set -euo pipefail
+          brew install xcodegen qemu
+          if [ "$MODE" = full ]; then brew install meson ninja pkg-config; fi
+          rustup target add aarch64-apple-ios || { brew install rustup && rustup-init -y && . "$HOME/.cargo/env" && rustup target add aarch64-apple-ios; }
+          rustc --version
+
+      # ---------------------------------------------------------------- fast
+      - name: Stage prebuilt pieces from the official release IPA
+        if: env.MODE == 'fast'
+        run: |
+          set -euo pipefail
+          mkdir -p official && cd official
+          curl -fL --retry 3 -o Husk.ipa "https://github.com/${UPSTREAM_REPO}/releases/download/${UPSTREAM_REF}/Husk.ipa"
+          unzip -q Husk.ipa
+          APP="$PWD/Payload/Husk.app"
+          cd ../husk
+          B=build/ios-arm64
+          mkdir -p $B/lib $B/sysroot/lib guests/phase0 third_party/build/qemu-10.0.12-utm/pc-bios
+
+          cp "$APP/Frameworks/libqemu-aarch64-softmmu.dylib" $B/lib/
+          cp "$APP/Frameworks/libANGLE-shared.dylib"          $B/sysroot/lib/
+          xcodebuild -create-xcframework -framework "$APP/Frameworks/MoltenVK.framework" -output $B/lib/MoltenVK.xcframework
+
+          rsync -a "$APP/java-runtime/"   build/java-runtime/
+          rsync -a "$APP/android-system/" build/android-system/
+
+          cp "$APP/vmlinuz-virt" "$APP/initramfs-virt" guests/phase0/
+          cp "$APP"/pc-bios/*.rom third_party/build/qemu-10.0.12-utm/pc-bios/
+          # the app's "Stage guest image" step unpacks this one itself
+          bzip2 -c "$APP/edk2-aarch64-code.fd" > third_party/build/qemu-10.0.12-utm/pc-bios/edk2-aarch64-code.fd.bz2
+          find build guests third_party -maxdepth 4 | head -40
+
+      - name: On-device pairing library (Rust)
+        if: env.MODE == 'fast'
+        run: |
+          set -euo pipefail
+          cd husk
+          ./scripts/build_rppairing_ios.sh
+
+      - name: Package IPA (fast)
+        if: env.MODE == 'fast'
+        run: |
+          set -euo pipefail
+          cd husk
+          mkdir -p ../out
+          ./scripts/package_ipa.sh ../out/Husk-patched.ipa
+
+      # ---------------------------------------------------------------- full
+      - name: Cache dependency builds
+        if: env.MODE == 'full'
+        uses: actions/cache@v4
+        with:
+          path: |
+            husk/build
+            husk/third_party
+          key: husk-deps-${{ env.UPSTREAM_REF }}-${{ hashFiles('husk/scripts/*.sh', 'husk/patches/*') }}
+
+      - name: Build everything (upstream scripts/ci_build.sh)
+        if: env.MODE == 'full'
+        run: |
+          set -euo pipefail
+          cd husk
+          mkdir -p ../out
+          ./scripts/ci_build.sh "$PWD/../out/Husk-patched.ipa"
+
+      # ------------------------------------------------------------- results
+      - name: Show what was built
+        run: |
+          ls -la out
+          unzip -p out/Husk-patched.ipa 'Payload/Husk.app/Info.plist' > /tmp/Info.plist || true
+          plutil -p /tmp/Info.plist 2>/dev/null | grep -E "HuskBuild|CFBundleVersion|CFBundleShortVersion" || true
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Husk-patched-ipa
+          path: out/*.ipa
+          if-no-files-found: error
+
+      - name: Publish release
+        if: ${{ (github.event_name == 'push' || inputs.publish) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="patched-${UPSTREAM_REF}-${MODE}-${GITHUB_RUN_NUMBER}"
+          gh release create "$TAG" out/Husk-patched.ipa \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Husk ${UPSTREAM_REF} + patches (${MODE}, run ${GITHUB_RUN_NUMBER})" \
+            --notes "Leviidev/Husk @ ${UPSTREAM_REF} with the patches in patches/ applied. Source: https://github.com/${UPSTREAM_REPO}/tree/${UPSTREAM_REF} (GPL-2.0-or-later) plus the patch files in this repository." \
+            --prerelease
