@@ -14,6 +14,7 @@ Husk は GPL-2.0-or-later です。このリポジトリにはパッチ（`patch
 | `patches/0005-unity-stall-all-threads.patch` | 診断用。0004 の停止検知で、ゲームが作った全スレッド（スレッド名つき）の停止位置を出す。TL_THREAD_TRACE も有効にして、スレッドが終了していないかも分かるようにする。 |
 | `patches/0006-unity-stall-stack-scan.patch` | 診断用。停止ダンプで、フレームポインタの連鎖が途切れる場合に備え、スタックをスキャンして戻りアドレスの候補（#100〜）も出す。 |
 | `patches/0007-sync-event-ring.patch` | 診断用。futex の待ち・起こしと条件変数の待ち・通知を、メモリ上のリングバッファに記録し、Unity が止まったときに直近約160件を出す（誰が何を待ち、誰が起こそうとしたか）。 |
+| `patches/0008-sync-ring-coalesce.patch` | 診断用。0007 のリングを 4096 件に拡大し、同じスレッド・種類・アドレスの繰り返し（vsync スレッドの 60Hz broadcast など）は 1 行にまとめて、止まる前後の出来事が埋もれないようにする。 |
 
 ## IPA の作り方
 
