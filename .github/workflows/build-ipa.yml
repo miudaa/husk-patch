@@ -163,8 +163,14 @@ jobs:
         run: |
           set -euo pipefail
           TAG="patched-${UPSTREAM_REF}-${MODE}-${GITHUB_RUN_NUMBER}"
-          gh release create "$TAG" out/Husk-patched.ipa \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Husk ${UPSTREAM_REF} + patches (${MODE}, run ${GITHUB_RUN_NUMBER})" \
-            --notes "Leviidev/Husk @ ${UPSTREAM_REF} with the patches in patches/ applied. Source: https://github.com/${UPSTREAM_REPO}/tree/${UPSTREAM_REF} (GPL-2.0-or-later) plus the patch files in this repository." \
-            --prerelease
+          for try in 1 2 3 4; do
+            if gh release create "$TAG" out/Husk-patched.ipa \
+              --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Husk ${UPSTREAM_REF} + patches (${MODE}, run ${GITHUB_RUN_NUMBER})" \
+              --notes "Leviidev/Husk @ ${UPSTREAM_REF} with the patches in patches/ applied. Source: https://github.com/${UPSTREAM_REPO}/tree/${UPSTREAM_REF} (GPL-2.0-or-later) plus the patch files in this repository." \
+              --prerelease; then exit 0; fi
+            echo "release try $try failed; cleaning up and retrying"
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+            sleep $((try * 15))
+          done
+          exit 1
