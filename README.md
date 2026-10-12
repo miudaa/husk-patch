@@ -19,6 +19,7 @@ Husk は GPL-2.0-or-later です。このリポジトリにはパッチ（`patch
 | `patches/0010-bundle-containskey.patch` | 0009 の続き。Unity は `Bundle.containsKey("unity")` を先に呼ぶので、起動引数があるときは `true` を返す（0009 だけでは引数が読まれていなかった）。 |
 | `patches/0011-bundle-getstring-default.patch` | 0010 の続き。Unity は `Bundle.getString(key, default)` の 2 引数版で引数を読むので、そちらも実装した。 |
 | `patches/0012-file-trace.patch` | 診断用。Unity の Vulkan ビルドで TL_FILE_TRACE を有効にし、ゲームが open / stat しようとしたファイルと結果（ENOENT など）をログに残す。 |
+| `patches/0013-etc-fonts-xml.patch` | `/etc/fonts.xml` と `/etc/font_fallback.xml`（実機では `/etc` が `/system/etc` へのリンク）も、アプリが持つフォント一覧に繋ぐ。Unity のフォント管理は `/etc/fonts.xml` を最初に開く。 |
 
 ## IPA の作り方
 

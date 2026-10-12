@@ -1,0 +1,13 @@
+diff --git a/src/translation-layer-next/husk-tl-bionic-io.c b/src/translation-layer-next/husk-tl-bionic-io.c
+index 03918f6..e0ea782 100644
+--- a/src/translation-layer-next/husk-tl-bionic-io.c
++++ b/src/translation-layer-next/husk-tl-bionic-io.c
+@@ -166,6 +166,8 @@ const char *tl_path_resolve(const char *path, char *buf, size_t n)
+     if (g_sysfonts[0]) {
+         if (!strncmp(path, "/system/fonts", 13) && (path[13] == 0 || path[13] == '/')) { snprintf(buf, n, "%s/fonts%s", g_sysfonts, path + 13); return buf; }
+         if (!strcmp(path, "/system/etc/fonts.xml") || !strcmp(path, "/system/etc/font_fallback.xml")) { snprintf(buf, n, "%s/etc%s", g_sysfonts, path + 11); return buf; }
++        /* /etc is a link to /system/etc on a phone, and Unity's font manager opens /etc/fonts.xml first */
++        if (!strcmp(path, "/etc/fonts.xml") || !strcmp(path, "/etc/font_fallback.xml")) { snprintf(buf, n, "%s/etc%s", g_sysfonts, path + 4); return buf; }
+     }
+     if (g_cacerts[0]) {
+         static const char *const roots[] = { "/system/etc/security/cacerts", "/apex/com.android.conscrypt/cacerts" };
