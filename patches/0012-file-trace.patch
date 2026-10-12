@@ -1,0 +1,13 @@
+diff --git a/src/translation-layer-next/husk-tl-unity-app.c b/src/translation-layer-next/husk-tl-unity-app.c
+index 81d563b..3164e24 100644
+--- a/src/translation-layer-next/husk-tl-unity-app.c
++++ b/src/translation-layer-next/husk-tl-unity-app.c
+@@ -473,7 +473,7 @@ static void *launch_thread(void *arg)
+             void tl_egl_offscreen_windows(bool on);
+             bool vk = A.vulkan[0] && tl_manifest_vulkan_required(A.apk);
+             tl_log_line("unity: Vulkan %s (MoltenVK %s, manifest requires Vulkan: %s)", vk ? "on" : "off", A.vulkan[0] ? "present" : "absent", tl_manifest_vulkan_required(A.apk) ? "yes" : "no");
+-            if (vk) { setenv("TL_VK_TRACE", "1", 0); setenv("TL_THREAD_TRACE", "1", 0); tl_sync_enable(true);
++            if (vk) { setenv("TL_VK_TRACE", "1", 0); setenv("TL_THREAD_TRACE", "1", 0); setenv("TL_FILE_TRACE", "1", 0); tl_sync_enable(true);
+                 tl_hle_set_unity_args("-force-gfx-direct"); tl_vk_configure(A.vulkan, NULL, 0); tl_egl_offscreen_windows(true); }
+         }
+         tl_audio_install();

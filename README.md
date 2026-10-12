@@ -18,6 +18,7 @@ Husk は GPL-2.0-or-later です。このリポジトリにはパッチ（`patch
 | `patches/0009-unity-force-gfx-direct.patch` | 実験。Vulkan 専用の Unity ビルドに、起動引数 `-force-gfx-direct`（描画を別スレッドに分けず、メインスレッドで直接行う）を渡す。Intent の extras `unity` を返す `Intent.getExtras` / `Bundle.getString` を実装した。メインスレッドと描画ワーカーの待ち合わせで止まる問題を避けられるかを見る。 |
 | `patches/0010-bundle-containskey.patch` | 0009 の続き。Unity は `Bundle.containsKey("unity")` を先に呼ぶので、起動引数があるときは `true` を返す（0009 だけでは引数が読まれていなかった）。 |
 | `patches/0011-bundle-getstring-default.patch` | 0010 の続き。Unity は `Bundle.getString(key, default)` の 2 引数版で引数を読むので、そちらも実装した。 |
+| `patches/0012-file-trace.patch` | 診断用。Unity の Vulkan ビルドで TL_FILE_TRACE を有効にし、ゲームが open / stat しようとしたファイルと結果（ENOENT など）をログに残す。 |
 
 ## IPA の作り方
 
