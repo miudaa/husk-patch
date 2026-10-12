@@ -1,0 +1,26 @@
+diff --git a/src/translation-layer-next/husk-tl-opensles.c b/src/translation-layer-next/husk-tl-opensles.c
+index 6fc019e..217221d 100644
+--- a/src/translation-layer-next/husk-tl-opensles.c
++++ b/src/translation-layer-next/husk-tl-opensles.c
+@@ -247,6 +247,7 @@ static const void *const k_vt_play[] = { p_SetPlayState, p_GetPlayState, p_unsup
+ static uint32_t q_Enqueue(const void *self, const void *buf, uint32_t size)
+ {
+     sl_object *o = OBJ_FROM(self, vt_bq);
++    { static int said; if (said < 12) { said++; tl_log_line("opensl: Enqueue(%p, %u bytes)", buf, (unsigned)size); } }
+     pthread_mutex_lock(&o->mu);
+     if (o->qcount >= MAX_QUEUE) { pthread_mutex_unlock(&o->mu); return SL_BUFFER_INSUFFICIENT; }
+     int tail = (o->qhead + o->qcount) % MAX_QUEUE;
+diff --git a/src/translation-layer-next/husk-tl-unity-app.c b/src/translation-layer-next/husk-tl-unity-app.c
+index 21c1a60..248b2be 100644
+--- a/src/translation-layer-next/husk-tl-unity-app.c
++++ b/src/translation-layer-next/husk-tl-unity-app.c
+@@ -494,6 +494,9 @@ static void *launch_thread(void *arg)
+             if (vk) { if (!getenv("TL_VK_KEEP_DT")) tl_vk_hide_display_timing(true); tl_vk_trace_fences(true); setenv("TL_VK_TRACE", "1", 0); setenv("TL_THREAD_TRACE", "1", 0); setenv("TL_FILE_TRACE", "1", 0); tl_sync_enable(true);
+                 tl_hle_set_unity_args("-force-gfx-direct"); tl_vk_configure(A.vulkan, NULL, 0); tl_egl_offscreen_windows(true); }
+         }
++        /* A game that ships its own FMOD (libfmod.so, apart from the engine's) reaches its output through the Java class org.fmod.AudioDevice; without an
++         * implementation that init fails and the game's FMOD stays silent. */
++        { void tl_fmod_install(void); tl_fmod_install(); }
+         tl_audio_install();
+         ok = tl_unity_start(&cfg);
+         if (ok && vk) unity_bypass_swappy();
