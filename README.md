@@ -23,6 +23,7 @@ Husk は GPL-2.0-or-later です。このリポジトリにはパッチ（`patch
 | `patches/0014-hide-display-timing-and-choreo-notes.patch` | 実験。Vulkan 専用の Unity ビルドには `VK_GOOGLE_display_timing` を見せず（Swappy が別のフレームペーシング実装を使う）、Choreographer のコールバック登録・実行と Looper の wake を同期リングに記録する。 |
 | `patches/0015-vk-fence-notes.patch` | 診断用。Vulkan 専用の Unity ビルドで vkQueueSubmit / vkWaitForFences / vkGetFenceStatus / vkResetFences の呼び出しと結果を同期リングに記録する（Swappy のフェンス待ちが完了するかを見る）。 |
 | `patches/0016-bypass-swappy-queuepresent.patch` | 修正案。Vulkan 専用の Unity 2020.3.33 で、`SwappyVk_queuePresent`（libunity +0xe0d7c8）の先頭を書き換えて MoltenVK の present を直接呼ぶ。Swappy が結果待ちで永久に止まる問題を避ける（先頭の命令が一致するビルドだけ。`TL_SWAPPY_KEEP` で無効）。 |
+| `patches/0017-touchscreen-input-device.patch` | 修正案。タッチ入力が効かない件。Unity が `InputEvent.getDevice()` を呼んで null を受け取っていたので、タッチスクリーンの `InputDevice`（ソース 0x1002）を返す。あわせて最初の数回のタッチの結果をログに出す。 |
 
 ## IPA の作り方
 

@@ -1,0 +1,98 @@
+diff --git a/src/translation-layer-next/husk-tl-gamepad.c b/src/translation-layer-next/husk-tl-gamepad.c
+index f3f0e51..a3208c6 100644
+--- a/src/translation-layer-next/husk-tl-gamepad.c
++++ b/src/translation-layer-next/husk-tl-gamepad.c
+@@ -129,6 +129,18 @@ static jvalue vf(float f) { jvalue v; v.j = 0; v.f = f; return v; }
+ static jobj *g_dev[TL_PADS];
+ static int slot_of(const jobj *o) { return o && o->native ? (int)(intptr_t)o->native - 1 : -1; }
+ 
++/* The touch screen is an InputDevice too: an engine asks a touch event for its device (Unity's getDevice, to tell the screen from a pad). */
++static jobj *device_object_for(int slot);
++#define TOUCH_NATIVE ((void *)(intptr_t)0x7fff)
++static bool is_touch(const jobj *o) { return o && o->native == TOUCH_NATIVE; }
++static jobj *g_touch;
++jobj *tl_pad_device_for_id(int id)
++{
++    if (id >= DEVICE_BASE && id < DEVICE_BASE + TL_PADS) return device_object_for(id - DEVICE_BASE);
++    if (!g_touch) { g_touch = tl_jni_new_object(tl_jni_class("android/view/InputDevice")); g_touch->native = TOUCH_NATIVE; }
++    return tl_jni_ref(g_touch);
++}
++
+ static jobj *device_object(int slot)
+ {
+     if (slot < 0 || slot >= TL_PADS || !P.connected[slot]) return NULL;
+@@ -136,6 +148,8 @@ static jobj *device_object(int slot)
+     return tl_jni_ref(g_dev[slot]);
+ }
+ 
++static jobj *device_object_for(int slot) { return device_object(slot); }
++
+ static void ID_getDeviceIds(tl_jcall *c)
+ {
+     int ids[TL_PADS], n = 0;
+@@ -145,19 +159,19 @@ static void ID_getDeviceIds(tl_jcall *c)
+     c->ret = vl(a);
+ }
+ static void ID_getDevice(tl_jcall *c) { c->ret = vl(device_object(c->args[0].i - DEVICE_BASE)); }
+-static void ID_getId(tl_jcall *c) { int s = slot_of(c->self); c->ret = vi(s >= 0 ? DEVICE_BASE + s : -1); }
++static void ID_getId(tl_jcall *c) { if (is_touch(c->self)) { c->ret = vi(0); return; } int s = slot_of(c->self); c->ret = vi(s >= 0 ? DEVICE_BASE + s : -1); }
+ /* Whatever it really is (a DualSense, a Switch Pro Controller...), a game is told it is an Xbox controller: the layout the games know. */
+-static void ID_getName(tl_jcall *c) { int s = slot_of(c->self); c->ret = vl(s >= 0 ? tl_jni_new_string("Xbox Wireless Controller") : NULL); }
+-static void ID_getDescriptor(tl_jcall *c) { char d[40]; snprintf(d, sizeof(d), "husk-controller-%d", slot_of(c->self)); c->ret = vl(tl_jni_new_string(d)); }
+-static void ID_getSources(tl_jcall *c) { c->ret = vi(SOURCE_ALL); }
+-static void ID_vendor(tl_jcall *c) { c->ret = vi(0x045e); }          /* Microsoft */
+-static void ID_product(tl_jcall *c) { c->ret = vi(0x02e0); }         /* Xbox Wireless Controller, over Bluetooth */
+-static void ID_one(tl_jcall *c) { c->ret = vi(slot_of(c->self) + 1); }
++static void ID_getName(tl_jcall *c) { if (is_touch(c->self)) { c->ret = vl(tl_jni_new_string("touchscreen")); return; } int s = slot_of(c->self); c->ret = vl(s >= 0 ? tl_jni_new_string("Xbox Wireless Controller") : NULL); }
++static void ID_getDescriptor(tl_jcall *c) { if (is_touch(c->self)) { c->ret = vl(tl_jni_new_string("husk-touchscreen")); return; } char d[40]; snprintf(d, sizeof(d), "husk-controller-%d", slot_of(c->self)); c->ret = vl(tl_jni_new_string(d)); }
++static void ID_getSources(tl_jcall *c) { c->ret = vi(is_touch(c->self) ? 0x1002 : SOURCE_ALL); }
++static void ID_vendor(tl_jcall *c) { c->ret = vi(is_touch(c->self) ? 0 : 0x045e); }          /* Microsoft */
++static void ID_product(tl_jcall *c) { c->ret = vi(is_touch(c->self) ? 0 : 0x02e0); }         /* Xbox Wireless Controller, over Bluetooth */
++static void ID_one(tl_jcall *c) { c->ret = vi(is_touch(c->self) ? 0 : slot_of(c->self) + 1); }
+ static void ID_zero(tl_jcall *c) { c->ret = vi(0); }
+ static void ID_false(tl_jcall *c) { c->ret = vz(0); }
+-static void ID_true(tl_jcall *c) { c->ret = vz(1); }
++static void ID_true(tl_jcall *c) { c->ret = vz(!is_touch(c->self)); }
+ static void ID_null(tl_jcall *c) { c->ret.l = NULL; }
+-static void ID_supportsSource(tl_jcall *c) { int m = c->args[0].i; c->ret = vz((SOURCE_ALL & m) == m); }
++static void ID_supportsSource(tl_jcall *c) { int m = c->args[0].i; int have = is_touch(c->self) ? 0x1002 : SOURCE_ALL; c->ret = vz((have & m) == m); }
+ static void ID_hasKeys(tl_jcall *c)
+ {
+     jobj *keys = c->args[0].l;
+diff --git a/src/translation-layer-next/husk-tl-jni-input.c b/src/translation-layer-next/husk-tl-jni-input.c
+index aded8a9..2eb281d 100644
+--- a/src/translation-layer-next/husk-tl-jni-input.c
++++ b/src/translation-layer-next/husk-tl-jni-input.c
+@@ -66,6 +66,8 @@ static void ME_getDownTime(tl_jcall *c) { const motion *m = M_(c); c->ret = vj(m
+ static void ME_getSource(tl_jcall *c)   { const motion *m = M_(c); c->ret = vi(m && m->source ? m->source : SOURCE_TOUCHSCREEN); }
+ static void ME_zeroI(tl_jcall *c)       { c->ret = vi(0); }
+ static void ME_getDeviceId(tl_jcall *c) { const motion *m = M_(c); c->ret = vi(m ? m->device : 0); }
++extern jobj *tl_pad_device_for_id(int id);
++static void ME_getDevice(tl_jcall *c)   { const motion *m = M_(c); c->ret.l = tl_pad_device_for_id(m ? m->device : 0); }
+ static void ME_getKeyCode(tl_jcall *c)  { const motion *m = M_(c); c->ret = vi(m ? m->keycode : 0); }
+ static void ME_getRepeat(tl_jcall *c)   { const motion *m = M_(c); c->ret = vi(m ? m->repeat : 0); }
+ static void ME_getMeta(tl_jcall *c)     { const motion *m = M_(c); c->ret = vi(m ? m->meta : 0); }
+@@ -195,6 +197,9 @@ static const tl_jhle k_input_hle[] = {
+     K("android/view/MotionEvent", "getEventTime", "()J", ME_getEventTime),
+     K("android/view/MotionEvent", "getDownTime", "()J", ME_getDownTime),
+     K("android/view/MotionEvent", "getSource", "()I", ME_getSource),
++    K("android/view/InputEvent", "getDevice", "()Landroid/view/InputDevice;", ME_getDevice),
++    K("android/view/MotionEvent", "getDevice", "()Landroid/view/InputDevice;", ME_getDevice),
++    K("android/view/KeyEvent", "getDevice", "()Landroid/view/InputDevice;", ME_getDevice),
+     K("android/view/InputEvent", "getSource", "()I", ME_getSource),
+     K("android/view/MotionEvent", "getDeviceId", "()I", ME_getDeviceId), K("android/view/InputEvent", "getDeviceId", "()I", ME_getDeviceId),
+     /* a controller's buttons */
+diff --git a/src/translation-layer-next/husk-tl-unity.c b/src/translation-layer-next/husk-tl-unity.c
+index 332d3b4..25e28a8 100644
+--- a/src/translation-layer-next/husk-tl-unity.c
++++ b/src/translation-layer-next/husk-tl-unity.c
+@@ -252,7 +252,8 @@ void tl_unity_touch(int phase, int id, float x, float y)
+         T.n = 0;
+     }
+     pthread_mutex_unlock(&T.lock);
+-    fn(tl_jni_env(), U.player, ev, 0);
++    uint8_t handled = fn(tl_jni_env(), U.player, ev, 0);
++    { static int said; if (said < 6) { said++; tl_log_line("unity: touch phase %d id %d at %.0f,%.0f -> engine says %s", phase, id, x, y, handled ? "handled" : "not handled"); } }
+     if (tl_jni_pending()) tl_jni_clear();
+     tl_jni_unref(ev);
+ }
