@@ -1,0 +1,61 @@
+diff --git a/src/translation-layer-next/husk-tl-egl.c b/src/translation-layer-next/husk-tl-egl.c
+index f5c3ba1..b0d7704 100644
+--- a/src/translation-layer-next/husk-tl-egl.c
++++ b/src/translation-layer-next/husk-tl-egl.c
+@@ -116,7 +116,6 @@ unsigned long tl_egl_frames_presented(void) { return atomic_load(&E.presented);
+ 
+ static EGLDisplay w_eglGetDisplay(void *native)
+ {
+-    (void)native;
+     pthread_mutex_lock(&E.lock);
+     if (!E.display && E.ready) {
+         const EGLint attribs[] = { EGL_PLATFORM_ANGLE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE, EGL_NONE };
+@@ -125,10 +124,19 @@ static EGLDisplay w_eglGetDisplay(void *native)
+     }
+     EGLDisplay d = E.display;
+     pthread_mutex_unlock(&E.lock);
++    if (getenv("TL_EGL_TRACE")) tl_log_line("egl: eglGetDisplay(%p) -> %p (ready %d)", native, d, (int)E.ready);
+     return d;
+ }
+ 
+-#define PASS_BOOL(name, params, args) static EGLBoolean w_##name params { return a_##name args; }
++/* A call that fails is always said (with eglGetError); under TL_EGL_TRACE every call is, so a run that stops before it draws shows which
++ * EGL step the engine gave up on. */
++static void egl_note_bool(const char *name, EGLBoolean ok)
++{
++    static int trace = -1;
++    if (trace < 0) trace = getenv("TL_EGL_TRACE") ? 1 : 0;
++    if (trace || !ok) tl_log_line("egl: %s -> %s%s%#x", name, ok ? "true" : "false", ok ? "" : ", eglGetError ", ok ? 0 : (E.ready ? a_eglGetError() : 0x3001));
++}
++#define PASS_BOOL(name, params, args) static EGLBoolean w_##name params { EGLBoolean ok = a_##name args; egl_note_bool(#name, ok); return ok; }
+ PASS_BOOL(eglInitialize, (EGLDisplay d, EGLint *a, EGLint *b), (d, a, b))
+ /* eglTerminate of the display everything here shares (the app's GL, Husk's own render thread): Android's counts initializations and
+  * tears down at the last; here Husk holds one for as long as it runs, so a library terminating its own use (Castle's GPU probe in X)
+@@ -220,7 +228,12 @@ PASS_BOOL(eglWaitGL, (void), ())
+ PASS_BOOL(eglWaitNative, (EGLint e), (e))
+ PASS_BOOL(eglReleaseThread, (void), ())
+ 
+-static const char *w_eglQueryString(EGLDisplay d, EGLint name) { return a_eglQueryString(d, name); }
++static const char *w_eglQueryString(EGLDisplay d, EGLint name)
++{
++    const char *r = a_eglQueryString(d, name);
++    if (getenv("TL_EGL_TRACE")) tl_log_line("egl: eglQueryString(%p, %#x) -> %s", d, name, r ? r : "(null)");
++    return r;
++}
+ static bool g_es31_shim;           /* defined with the rest of the shim, below */
+ static EGLContext w_eglCreateContext(EGLDisplay d, EGLConfig c, EGLContext share, const EGLint *at)
+ {
+@@ -249,7 +262,12 @@ static EGLContext w_eglGetCurrentContext(void) { return a_eglGetCurrentContext()
+ static EGLSurface w_eglGetCurrentSurface(EGLint w) { return a_eglGetCurrentSurface(w); }
+ static EGLDisplay w_eglGetCurrentDisplay(void) { return a_eglGetCurrentDisplay(); }
+ static EGLenum w_eglQueryAPI(void) { return a_eglQueryAPI(); }
+-static EGLint w_eglGetError(void) { return E.ready ? a_eglGetError() : 0x3001; }
++static EGLint w_eglGetError(void)
++{
++    EGLint e = E.ready ? a_eglGetError() : 0x3001;
++    if (e != 0x3000 && getenv("TL_EGL_TRACE")) tl_log_line("egl: eglGetError -> %#x", e);
++    return e;
++}
+ 
+ /* The guest's ANativeWindow: a Metal layer on the phone, an off-screen buffer for tests. */
+ static bool g_offscreen_windows;
