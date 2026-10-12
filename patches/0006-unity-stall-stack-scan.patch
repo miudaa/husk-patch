@@ -1,0 +1,24 @@
+diff --git a/src/translation-layer-next/husk-tl-unity-app.c b/src/translation-layer-next/husk-tl-unity-app.c
+index 503698b..bff9de5 100644
+--- a/src/translation-layer-next/husk-tl-unity-app.c
++++ b/src/translation-layer-next/husk-tl-unity-app.c
+@@ -189,6 +189,19 @@ static void stall_dump_handler(int sig, siginfo_t *si, void *ctx)
+         prev = fp;
+         fp = ((uintptr_t *)fp)[0];
+     }
++    /* Guest code is often built without frame pointers, so the chain above stops early. Look through the stack itself for return addresses:
++     * a word that points into a loaded library, right after a call instruction (BL, or BLR). The nearest first, read as a call stack. */
++    {
++        uintptr_t sp = (uintptr_t)__darwin_arm_thread_state64_get_sp(uc->uc_mcontext->__ss);
++        uintptr_t top = (uintptr_t)pthread_get_stackaddr_np(pthread_self());
++        int found = 0;
++        for (uintptr_t w = sp & ~(uintptr_t)7; w + 8 <= top && w < sp + 49152 && found < 40; w += 8) {
++            uintptr_t v = *(uintptr_t *)w;
++            if (v < 0x100000 || !tl_ld_lib_of((const void *)v)) continue;
++            uint32_t ins = *(const uint32_t *)(v - 4);
++            if ((ins & 0xfc000000u) == 0x94000000u || (ins & 0xfffffc1fu) == 0xd63f0000u) stall_log_addr(who, 100 + found++, v);
++        }
++    }
+ #else
+     (void)ctx;
+ #endif

@@ -12,6 +12,7 @@ Husk は GPL-2.0-or-later です。このリポジトリにはパッチ（`patch
 | `patches/0003-unity-vulkan-only-builds-use-moltenvk.patch` | Vulkan だけでビルドされた Unity ゲーム（GLES 用シェーダーが無い。例: Taiko 0.99.98）に MoltenVK を渡す。マニフェストが `android.hardware.vulkan.version` を必須としているときだけ有効で、GLES でも動くビルドは従来どおり ANGLE を使う。これが無いと Unity は libvulkan.so を見つけられず、「Your device does not match the hardware requirements」を出して 0 フレームで止まる。 |
 | `patches/0004-unity-stall-backtrace.patch` | 診断用。Unity のフレーム数が 8 秒（と 20 秒）止まったら、エンジンのスレッドに SIGUSR2 を送り、PC・LR・フレームポインタの連鎖を「ライブラリ名 + オフセット」でログに出す。あわせて Vulkan のトレース（TL_VK_TRACE）も有効にする。 |
 | `patches/0005-unity-stall-all-threads.patch` | 診断用。0004 の停止検知で、ゲームが作った全スレッド（スレッド名つき）の停止位置を出す。TL_THREAD_TRACE も有効にして、スレッドが終了していないかも分かるようにする。 |
+| `patches/0006-unity-stall-stack-scan.patch` | 診断用。停止ダンプで、フレームポインタの連鎖が途切れる場合に備え、スタックをスキャンして戻りアドレスの候補（#100〜）も出す。 |
 
 ## IPA の作り方
 
