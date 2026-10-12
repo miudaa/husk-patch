@@ -31,6 +31,7 @@ Husk は GPL-2.0-or-later です。このリポジトリにはパッチ（`patch
 | `patches/0022-touchscreen-in-device-list.patch` | 修正案。タッチが効かない件。エンジンは端末の入力デバイス一覧（`InputDevice.getDeviceIds`）にタッチスクリーンがあるかでタッチ対応を決めるため、一覧にタッチスクリーン（ID 5）を加え、タッチのイベントの `getDeviceId` も 5 にそろえる。 |
 | `patches/0023-mix-audio-sources.patch` | 修正案。音ズレ・太鼓の音が鳴らない件。同時に動く複数の音源（Unity の FMOD、ゲームの FMOD、CRI）がホストの音声に順番に追記されていたので、音源ごとの位置に足し合わせる（ミックスする）方式に変え、音源が先に書ける量を3バースト分（約65ms）に抑えて遅延も減らす。 |
 | `patches/0024-audio-source-summaries.patch` | 診断用。OpenSL ES のプレイヤーと AAudio のストリームごとに、数秒おきに「何バッファ流れて、音が入っていたか（最大の振幅）」をログに出す（太鼓の音が出ているのに聞こえないのか、ゲームが音を出していないのかを分ける）。 |
+| `patches/0025-aaudio-lifecycle-notes.patch` | 診断用。AAudio ストリームの open/start/stop/close と、write 型ストリーム（FMOD が使う）の呼び出し回数・拒否回数・音の有無、OpenSL ES の最初のバッファの大きさと200バッファにかかった時間をログに出す。 |
 
 ## IPA の作り方
 

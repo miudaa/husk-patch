@@ -1,0 +1,74 @@
+diff --git a/src/translation-layer-next/husk-tl-bionic-ndk.c b/src/translation-layer-next/husk-tl-bionic-ndk.c
+index c8f7220..455ac65 100644
+--- a/src/translation-layer-next/husk-tl-bionic-ndk.c
++++ b/src/translation-layer-next/husk-tl-bionic-ndk.c
+@@ -387,7 +387,7 @@ static int b_AAudioStreamBuilder_openStream(aa_builder *b, aa_stream **out)
+     s->channels = b->channels == 1 ? 1 : AA_CHANNELS;
+     atomic_store(&s->state, AA_STATE_OPEN); atomic_store(&s->buffer_size, s->burst * 2);
+     *out = s;
+-    tl_log_line("aaudio: stream opened (%d Hz, %d channels, %s, %s, burst %d)", AA_RATE, s->channels, s->format == AA_FORMAT_FLOAT ? "float" : "16-bit",
++    tl_log_line("aaudio: stream %p opened (%d Hz, %d channels, %s, %s, burst %d)", (void *)s, AA_RATE, s->channels, s->format == AA_FORMAT_FLOAT ? "float" : "16-bit",
+                 s->cb ? "data callback" : "written", s->burst);
+     return AA_OK;
+ }
+@@ -442,6 +442,7 @@ static void *aa_pump(void *arg)
+ 
+ static int b_AAudioStream_requestStart(aa_stream *s)
+ {
++    tl_log_line("aaudio: stream %p start (%s)", (void *)s, s->cb ? "data callback" : "written");
+     atomic_store(&s->state, AA_STATE_STARTED);
+     if (!s->cb) return AA_OK;                                       /* written streams play as write() is called */
+     if (atomic_exchange(&s->run, true)) return AA_OK;
+@@ -456,8 +457,8 @@ static int aa_stop(aa_stream *s, int state)
+     atomic_store(&s->state, state);
+     return AA_OK;
+ }
+-static int b_AAudioStream_requestStop(aa_stream *s) { return aa_stop(s, AA_STATE_STOPPED); }
+-static int b_AAudioStream_close(aa_stream *s) { aa_stop(s, AA_STATE_CLOSED); free(s); return AA_OK; }
++static int b_AAudioStream_requestStop(aa_stream *s) { tl_log_line("aaudio: stream %p stop", (void *)s); return aa_stop(s, AA_STATE_STOPPED); }
++static int b_AAudioStream_close(aa_stream *s) { tl_log_line("aaudio: stream %p close", (void *)s); aa_stop(s, AA_STATE_CLOSED); free(s); return AA_OK; }
+ static int b_AAudioStream_getSampleRate(aa_stream *s) { (void)s; return AA_RATE; }
+ static int b_AAudioStream_getChannelCount(aa_stream *s) { return s->channels; }
+ static int b_AAudioStream_getFormat(aa_stream *s) { return s->format; }
+@@ -477,6 +478,13 @@ static int b_AAudioStream_release(aa_stream *s) { (void)s; return AA_OK; }
+ static int b_AAudioStream_write(aa_stream *s, const void *buf, int frames, int64_t timeout)
+ {
+     (void)timeout;
++    {   /* a summary of a written stream every so often: calls, frames taken, how often it was not started, whether the samples carried sound */
++        static __thread int calls, refused, loud; static __thread long taken;
++        calls++;
++        if (atomic_load(&s->state) != AA_STATE_STARTED) refused++;
++        else { taken += frames; const int16_t *p = buf; if (s->format == AA_FORMAT_I16) for (int i = 0; i < frames * s->channels; i++) if (p[i] > 64 || p[i] < -64) { loud++; break; } }
++        if (calls % 200 == 0) { tl_log_line("aaudio: stream %p written: %d calls, %d refused (not started), %ld frames, %d with sound", (void *)s, calls, refused, taken, loud); refused = 0; loud = 0; }
++    }
+     if (atomic_load(&s->state) != AA_STATE_STARTED) return 0;
+     aa_play(s, buf, frames);
+     atomic_fetch_add(&s->frames, frames);
+diff --git a/src/translation-layer-next/husk-tl-opensles.c b/src/translation-layer-next/husk-tl-opensles.c
+index 2b15bc1..6fc019e 100644
+--- a/src/translation-layer-next/husk-tl-opensles.c
++++ b/src/translation-layer-next/husk-tl-opensles.c
+@@ -131,7 +131,7 @@ typedef struct sl_object {
+     atomic_bool thread_run;
+     pthread_t thread;
+     bool thread_started;
+-    int diag_buffers, diag_peak; bool diag_said;    /* the pump's summary of what the game plays */
++    int diag_buffers, diag_peak; bool diag_said; struct timespec diag_t;    /* the pump's summary of what the game plays */
+ } sl_object;
+ 
+ static sl_object *obj_of_object(const void *itf) { return (sl_object *)itf; }
+@@ -198,7 +198,13 @@ static void *player_pump(void *arg)
+             if (peak > o->diag_peak) o->diag_peak = peak;
+             o->diag_buffers++;
+             if (o->diag_peak > 0 && !o->diag_said) { o->diag_said = true; tl_log_line("opensl: player %p: first non-silent buffer (peak %d) after %d buffers", (void *)o, peak, o->diag_buffers); }
+-            if (o->diag_buffers % 200 == 0) { tl_log_line("opensl: player %p: %d buffers, loudest so far %d", (void *)o, o->diag_buffers, o->diag_peak); o->diag_peak = 0; }
++            if (o->diag_buffers == 1) tl_log_line("opensl: player %p: first buffer is %u bytes = %d frames of %d channels at %d Hz", (void *)o, (unsigned)size, frames, ch, rate);
++            if (o->diag_buffers % 200 == 0) {
++                struct timespec now; clock_gettime(CLOCK_MONOTONIC, &now);
++                double ms = (double)(now.tv_sec - o->diag_t.tv_sec) * 1e3 + (double)(now.tv_nsec - o->diag_t.tv_nsec) / 1e6;
++                tl_log_line("opensl: player %p: %d buffers (200 took %.0f ms), loudest so far %d", (void *)o, o->diag_buffers, o->diag_t.tv_sec ? ms : 0.0, o->diag_peak);
++                o->diag_t = now; o->diag_peak = 0;
++            }
+         }
+         if (tl_cocos_audio_hook) tl_cocos_audio_hook((const int16_t *)data, frames, ch, rate);
+         else { struct timespec ts = { 0, (long)((double)frames * 1e9 / rate) }; nanosleep(&ts, NULL); }
