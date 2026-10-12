@@ -1,0 +1,44 @@
+diff --git a/src/translation-layer-next/husk-tl-bionic-ndk.c b/src/translation-layer-next/husk-tl-bionic-ndk.c
+index 1c8a2cb..c8f7220 100644
+--- a/src/translation-layer-next/husk-tl-bionic-ndk.c
++++ b/src/translation-layer-next/husk-tl-bionic-ndk.c
+@@ -426,6 +426,12 @@ static void *aa_pump(void *arg)
+         int r = s->cb(s, s->user, buf, n);
+         if (!atomic_load(&s->run)) break;
+         { static bool said; if (!said) { for (size_t i = 0; i < (size_t)n * frame_bytes; i++) if (buf[i]) { said = true; tl_log_line("aaudio: the game's first non-silent burst (byte %zu)", i); break; } } }
++        {   /* per stream: how many bursts, and whether any carried sound, as a summary every few seconds */
++            static __thread int bursts, loud; bool any = false;
++            for (size_t i = 0; i < (size_t)n * frame_bytes; i++) if (buf[i]) { any = true; break; }
++            bursts++; if (any) loud++;
++            if (bursts % 150 == 0) { tl_log_line("aaudio: stream %p: %d bursts, %d with sound", (void *)s, bursts, loud); loud = 0; }
++        }
+         aa_play(s, buf, n);
+         atomic_fetch_add(&s->frames, n);
+         if (r != 0) break;
+diff --git a/src/translation-layer-next/husk-tl-opensles.c b/src/translation-layer-next/husk-tl-opensles.c
+index 8c548b5..2b15bc1 100644
+--- a/src/translation-layer-next/husk-tl-opensles.c
++++ b/src/translation-layer-next/husk-tl-opensles.c
+@@ -131,6 +131,7 @@ typedef struct sl_object {
+     atomic_bool thread_run;
+     pthread_t thread;
+     bool thread_started;
++    int diag_buffers, diag_peak; bool diag_said;    /* the pump's summary of what the game plays */
+ } sl_object;
+ 
+ static sl_object *obj_of_object(const void *itf) { return (sl_object *)itf; }
+@@ -191,6 +192,14 @@ static void *player_pump(void *arg)
+         if (!data) { usleep(1000); continue; }
+         int ch = o->channels > 0 ? o->channels : 2, rate = o->rate > 0 ? o->rate : 48000;
+         int frames = (int)(size / (2u * (uint32_t)ch));
++        {   /* what the game is putting out: a summary of this player every few seconds (a silent game and a silent player look alike from outside) */
++            const int16_t *pcm = data; int peak = 0;
++            for (int i = 0; i < frames * ch; i++) { int v = pcm[i] < 0 ? -pcm[i] : pcm[i]; if (v > peak) peak = v; }
++            if (peak > o->diag_peak) o->diag_peak = peak;
++            o->diag_buffers++;
++            if (o->diag_peak > 0 && !o->diag_said) { o->diag_said = true; tl_log_line("opensl: player %p: first non-silent buffer (peak %d) after %d buffers", (void *)o, peak, o->diag_buffers); }
++            if (o->diag_buffers % 200 == 0) { tl_log_line("opensl: player %p: %d buffers, loudest so far %d", (void *)o, o->diag_buffers, o->diag_peak); o->diag_peak = 0; }
++        }
+         if (tl_cocos_audio_hook) tl_cocos_audio_hook((const int16_t *)data, frames, ch, rate);
+         else { struct timespec ts = { 0, (long)((double)frames * 1e9 / rate) }; nanosleep(&ts, NULL); }
+         pthread_mutex_lock(&o->mu);
