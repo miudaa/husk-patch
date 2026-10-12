@@ -1,0 +1,54 @@
+diff --git a/src/translation-layer-next/husk-tl-gamepad.c b/src/translation-layer-next/husk-tl-gamepad.c
+index a3208c6..74e384a 100644
+--- a/src/translation-layer-next/husk-tl-gamepad.c
++++ b/src/translation-layer-next/husk-tl-gamepad.c
+@@ -131,12 +131,14 @@ static int slot_of(const jobj *o) { return o && o->native ? (int)(intptr_t)o->na
+ 
+ /* The touch screen is an InputDevice too: an engine asks a touch event for its device (Unity's getDevice, to tell the screen from a pad). */
+ static jobj *device_object_for(int slot);
++#define TOUCH_DEVICE_ID 5                 /* the touch screen in the device list, as on a phone */
+ #define TOUCH_NATIVE ((void *)(intptr_t)0x7fff)
+ static bool is_touch(const jobj *o) { return o && o->native == TOUCH_NATIVE; }
+ static jobj *g_touch;
+ jobj *tl_pad_device_for_id(int id)
+ {
+     if (id >= DEVICE_BASE && id < DEVICE_BASE + TL_PADS) return device_object_for(id - DEVICE_BASE);
++    if (id != 0 && id != TOUCH_DEVICE_ID) return NULL;
+     if (!g_touch) { g_touch = tl_jni_new_object(tl_jni_class("android/view/InputDevice")); g_touch->native = TOUCH_NATIVE; }
+     return tl_jni_ref(g_touch);
+ }
+@@ -152,14 +154,15 @@ static jobj *device_object_for(int slot) { return device_object(slot); }
+ 
+ static void ID_getDeviceIds(tl_jcall *c)
+ {
+-    int ids[TL_PADS], n = 0;
++    int ids[TL_PADS + 1], n = 0;
++    ids[n++] = TOUCH_DEVICE_ID;       /* an engine decides whether touch exists from the devices it lists */
+     for (int s = 0; s < TL_PADS; s++) if (P.connected[s]) ids[n++] = DEVICE_BASE + s;
+     jobj *a = tl_jni_new_prim_array('I', (uint32_t)n);
+     if (n) memcpy(a->arr.data, ids, (size_t)n * sizeof(int));
+     c->ret = vl(a);
+ }
+-static void ID_getDevice(tl_jcall *c) { c->ret = vl(device_object(c->args[0].i - DEVICE_BASE)); }
+-static void ID_getId(tl_jcall *c) { if (is_touch(c->self)) { c->ret = vi(0); return; } int s = slot_of(c->self); c->ret = vi(s >= 0 ? DEVICE_BASE + s : -1); }
++static void ID_getDevice(tl_jcall *c) { int id = c->args[0].i; c->ret = vl(id == TOUCH_DEVICE_ID ? tl_pad_device_for_id(id) : device_object(id - DEVICE_BASE)); }
++static void ID_getId(tl_jcall *c) { if (is_touch(c->self)) { c->ret = vi(TOUCH_DEVICE_ID); return; } int s = slot_of(c->self); c->ret = vi(s >= 0 ? DEVICE_BASE + s : -1); }
+ /* Whatever it really is (a DualSense, a Switch Pro Controller...), a game is told it is an Xbox controller: the layout the games know. */
+ static void ID_getName(tl_jcall *c) { if (is_touch(c->self)) { c->ret = vl(tl_jni_new_string("touchscreen")); return; } int s = slot_of(c->self); c->ret = vl(s >= 0 ? tl_jni_new_string("Xbox Wireless Controller") : NULL); }
+ static void ID_getDescriptor(tl_jcall *c) { if (is_touch(c->self)) { c->ret = vl(tl_jni_new_string("husk-touchscreen")); return; } char d[40]; snprintf(d, sizeof(d), "husk-controller-%d", slot_of(c->self)); c->ret = vl(tl_jni_new_string(d)); }
+diff --git a/src/translation-layer-next/husk-tl-jni-input.c b/src/translation-layer-next/husk-tl-jni-input.c
+index 2eb281d..f5315cf 100644
+--- a/src/translation-layer-next/husk-tl-jni-input.c
++++ b/src/translation-layer-next/husk-tl-jni-input.c
+@@ -65,9 +65,9 @@ static void ME_getEventTime(tl_jcall *c){ const motion *m = M_(c); c->ret = vj(m
+ static void ME_getDownTime(tl_jcall *c) { const motion *m = M_(c); c->ret = vj(m ? m->down_ms : 0); }
+ static void ME_getSource(tl_jcall *c)   { const motion *m = M_(c); c->ret = vi(m && m->source ? m->source : SOURCE_TOUCHSCREEN); }
+ static void ME_zeroI(tl_jcall *c)       { c->ret = vi(0); }
+-static void ME_getDeviceId(tl_jcall *c) { const motion *m = M_(c); c->ret = vi(m ? m->device : 0); }
++static void ME_getDeviceId(tl_jcall *c) { const motion *m = M_(c); c->ret = vi(m ? (m->device == 0 && m->source == 0 && !m->joystick && !m->keycode ? 5 /* the touch screen */ : m->device) : 0); }
+ extern jobj *tl_pad_device_for_id(int id);
+-static void ME_getDevice(tl_jcall *c)   { const motion *m = M_(c); c->ret.l = tl_pad_device_for_id(m ? m->device : 0); }
++static void ME_getDevice(tl_jcall *c)   { const motion *m = M_(c); c->ret.l = tl_pad_device_for_id(m ? (m->device == 0 && m->source == 0 && !m->joystick && !m->keycode ? 5 : m->device) : 5); }
+ static void ME_getKeyCode(tl_jcall *c)  { const motion *m = M_(c); c->ret = vi(m ? m->keycode : 0); }
+ static void ME_getRepeat(tl_jcall *c)   { const motion *m = M_(c); c->ret = vi(m ? m->repeat : 0); }
+ static void ME_getMeta(tl_jcall *c)     { const motion *m = M_(c); c->ret = vi(m ? m->meta : 0); }
