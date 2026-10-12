@@ -1,0 +1,16 @@
+diff --git a/src/translation-layer-next/husk-tl-unity.c b/src/translation-layer-next/husk-tl-unity.c
+index 25e28a8..eb4b1d8 100644
+--- a/src/translation-layer-next/husk-tl-unity.c
++++ b/src/translation-layer-next/husk-tl-unity.c
+@@ -252,7 +252,11 @@ void tl_unity_touch(int phase, int id, float x, float y)
+         T.n = 0;
+     }
+     pthread_mutex_unlock(&T.lock);
++    /* The first touches: record every Java call the engine makes while it reads the event, to see what it asks for and what it is told. */
++    static int traced; bool trace = traced < 3 && phase != 1;
++    if (trace) { traced++; tl_log_line("unity: --- JNI calls while the engine reads touch %d ---", traced); tl_jni_set_trace(2); }
+     uint8_t handled = fn(tl_jni_env(), U.player, ev, 0);
++    if (trace) { tl_jni_set_trace(0); tl_log_line("unity: --- end of touch %d ---", traced); }
+     { static int said; if (said < 6) { said++; tl_log_line("unity: touch phase %d id %d at %.0f,%.0f -> engine says %s", phase, id, x, y, handled ? "handled" : "not handled"); } }
+     if (tl_jni_pending()) tl_jni_clear();
+     tl_jni_unref(ev);
