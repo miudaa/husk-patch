@@ -1,0 +1,144 @@
+diff --git a/src/translation-layer-next/husk-tl-bionic-io.c b/src/translation-layer-next/husk-tl-bionic-io.c
+index aea671f..47a3193 100644
+--- a/src/translation-layer-next/husk-tl-bionic-io.c
++++ b/src/translation-layer-next/husk-tl-bionic-io.c
+@@ -18,6 +18,7 @@
+ #include <errno.h>
+ #include <execinfo.h>
+ #include <TargetConditionals.h>
++#include <stdatomic.h>
+ #include <stdbool.h>
+ #include <fcntl.h>
+ #include <limits.h>
+@@ -1387,6 +1388,7 @@ static int b_raise(int sig) { note_signal("raise", sig); int d = tl_signal_to_da
+  * answered with Darwin's equivalents. Returns the result, or -errno in Linux numbering.
+  */
+ #define FUT_BUCKETS 256
++void tl_sync_note(const char *kind, const void *addr, long a, long b);
+ 
+ /*
+  * A futex wakes exactly the threads waiting on the address it is given. Waking a whole hash bucket
+@@ -1408,6 +1410,39 @@ static struct { pthread_mutex_t m; fut_waiter *head, *tail; } g_fut[FUT_BUCKETS]
+ 
+ static int g_futex_trace = -1;
+ 
++/*
++ * A ring of the last synchronisation events (futex waits and wakes, condition-variable waits and signals), kept only when a diagnostic asked for it
++ * (tl_sync_enable) and said on request (tl_sync_dump): when a game stops, the last few hundred of them show who was waiting on what, and who tried to wake it.
++ */
++typedef struct { uint64_t ns; const void *addr; const char *kind; long a, b; char who[20]; } sync_ev;
++#define SYNC_RING 1024
++static sync_ev g_sync[SYNC_RING];
++static atomic_ulong g_sync_n;
++static atomic_bool g_sync_on;
++void tl_sync_enable(bool on) { atomic_store(&g_sync_on, on); }
++void tl_sync_note(const char *kind, const void *addr, long a, long b)
++{
++    if (!atomic_load_explicit(&g_sync_on, memory_order_relaxed)) return;
++    sync_ev *e = &g_sync[atomic_fetch_add(&g_sync_n, 1) % SYNC_RING];
++    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
++    e->ns = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
++    e->addr = addr; e->kind = kind; e->a = a; e->b = b;
++    e->who[0] = 0;
++    pthread_getname_np(pthread_self(), e->who, sizeof(e->who));
++}
++void tl_sync_dump(int n)
++{
++    unsigned long total = atomic_load(&g_sync_n);
++    if (n > SYNC_RING) n = SYNC_RING;
++    if ((unsigned long)n > total) n = (int)total;
++    uint64_t last = total ? g_sync[(total - 1) % SYNC_RING].ns : 0;
++    tl_log_line("sync: the last %d of %lu events (times are ms before the newest):", n, total);
++    for (unsigned long i = total - (unsigned long)n; i < total; i++) {
++        const sync_ev *e = &g_sync[i % SYNC_RING];
++        tl_log_line("sync: -%.1f %-22s %-14s %p %ld %ld", (double)(last - e->ns) / 1e6, e->who[0] ? e->who : "?", e->kind ? e->kind : "?", e->addr, e->a, e->b);
++    }
++}
++
+ static void fut_unlink(size_t h, fut_waiter *w)
+ {
+     fut_waiter **pp = &g_fut[h].head, *prev = NULL;
+@@ -1436,18 +1471,20 @@ static long futex_call(uint32_t *addr, int op, uint32_t val, const struct timesp
+             woken++;
+         }
+         pthread_mutex_unlock(&g_fut[h].m);
++        tl_sync_note("futex-wake", addr, (int)val, woken);
+         if (g_futex_trace) { char nm[32] = ""; pthread_getname_np(pthread_self(), nm, sizeof(nm)); tl_log_line("futex[%s]: WAKE addr=%p n=%d woke %ld", nm, (void *)addr, (int)val, woken); }
+         return woken;
+     }
+     if (cmd == 0 || cmd == 9) {                                   /* FUTEX_WAIT / WAIT_BITSET */
+         pthread_mutex_lock(&g_fut[h].m);
+-        if (__atomic_load_n(addr, __ATOMIC_SEQ_CST) != val) { pthread_mutex_unlock(&g_fut[h].m); return -11; }
++        if (__atomic_load_n(addr, __ATOMIC_SEQ_CST) != val) { pthread_mutex_unlock(&g_fut[h].m); tl_sync_note("futex-again", addr, val, (long)__atomic_load_n(addr, __ATOMIC_SEQ_CST)); return -11; }
+         fut_waiter me = { .addr = addr, .woken = false, .cv = PTHREAD_COND_INITIALIZER, .next = NULL };
+         if (g_fut[h].tail) g_fut[h].tail->next = &me; else g_fut[h].head = &me;
+         g_fut[h].tail = &me;
+         if (g_futex_trace) { char nm[32] = ""; pthread_getname_np(pthread_self(), nm, sizeof(nm)); tl_log_line("futex[%s]: WAIT addr=%p val=%#x", nm, (void *)addr, val); }
+         long r = 0;
+         struct timespec rel = {0};
++        tl_sync_note("futex-wait", addr, val, to ? (long)(to->tv_sec * 1000 + to->tv_nsec / 1000000) : -1);
+         if (to) {
+             rel = *to;
+             if (cmd == 9) {                                       /* absolute: CLOCK_MONOTONIC unless the realtime flag is set */
+@@ -1465,6 +1502,7 @@ static long futex_call(uint32_t *addr, int op, uint32_t val, const struct timesp
+         }
+         pthread_mutex_unlock(&g_fut[h].m);
+         pthread_cond_destroy(&me.cv);
++        tl_sync_note("futex-woke", addr, r, 0);
+         return r;
+     }
+     return -38;
+diff --git a/src/translation-layer-next/husk-tl-bionic-pthread.c b/src/translation-layer-next/husk-tl-bionic-pthread.c
+index 050b6e8..99279e5 100644
+--- a/src/translation-layer-next/husk-tl-bionic-pthread.c
++++ b/src/translation-layer-next/husk-tl-bionic-pthread.c
+@@ -165,11 +165,15 @@ static int b_cond_destroy(void *g)
+     memset(g, 0, 48);
+     return 0;
+ }
+-static int b_cond_signal(void *g)    { return rc(pthread_cond_signal(obj_host(g, make_cond))); }
+-static int b_cond_broadcast(void *g) { return rc(pthread_cond_broadcast(obj_host(g, make_cond))); }
++void tl_sync_note(const char *kind, const void *addr, long a, long b);
++static int b_cond_signal(void *g)    { tl_sync_note("cond-signal", g, 0, 0); return rc(pthread_cond_signal(obj_host(g, make_cond))); }
++static int b_cond_broadcast(void *g) { tl_sync_note("cond-broadcast", g, 0, 0); return rc(pthread_cond_broadcast(obj_host(g, make_cond))); }
+ static int b_cond_wait(void *g, void *m)
+ {
+-    return rc(pthread_cond_wait(obj_host(g, make_cond), obj_host(m, make_mutex)));
++    tl_sync_note("cond-wait", g, (long)(uintptr_t)m, 0);
++    int r = rc(pthread_cond_wait(obj_host(g, make_cond), obj_host(m, make_mutex)));
++    tl_sync_note("cond-woke", g, r, 0);
++    return r;
+ }
+ 
+ static int b_cond_timedwait(void *g, void *m, const struct timespec *abs)
+diff --git a/src/translation-layer-next/husk-tl-unity-app.c b/src/translation-layer-next/husk-tl-unity-app.c
+index bff9de5..3933433 100644
+--- a/src/translation-layer-next/husk-tl-unity-app.c
++++ b/src/translation-layer-next/husk-tl-unity-app.c
+@@ -168,6 +168,8 @@ static void stall_log_addr(const char *who, int i, uintptr_t a)
+     else tl_log_line("unity: stall[%s]: #%d %#lx", who, i, (unsigned long)a);
+ }
+ void tl_guest_threads_signal(int darwin_sig);
++void tl_sync_enable(bool on);
++void tl_sync_dump(int n);
+ static void stall_dump_handler(int sig, siginfo_t *si, void *ctx)
+ {
+     (void)sig; (void)si;
+@@ -235,7 +237,7 @@ static void *heartbeat_thread(void *arg)
+         if (A.engine == ENGINE_UNITY && f > 0) {
+             struct timespec now; clock_gettime(CLOCK_MONOTONIC, &now);
+             double still = (now.tv_sec - moved.tv_sec) + (now.tv_nsec - moved.tv_nsec) / 1e9;
+-            if ((stall_dumps == 0 && still >= 8) || (stall_dumps == 1 && still >= 20)) { stall_dumps++; tl_log_line("unity: stall: no frame for %.0f s; every thread of the game says where it is", still); tl_unity_poke(SIGUSR2); usleep(50000); tl_guest_threads_signal(SIGUSR2); }
++            if ((stall_dumps == 0 && still >= 8) || (stall_dumps == 1 && still >= 20)) { stall_dumps++; tl_log_line("unity: stall: no frame for %.0f s; every thread of the game says where it is", still); tl_sync_dump(160); tl_unity_poke(SIGUSR2); usleep(50000); tl_guest_threads_signal(SIGUSR2); }
+         }
+         { extern volatile struct { uint64_t count, x21, impl, mask; } tl_va_clobber;
+           static uint64_t seen;
+@@ -470,7 +472,7 @@ static void *launch_thread(void *arg)
+             void tl_egl_offscreen_windows(bool on);
+             bool vk = A.vulkan[0] && tl_manifest_vulkan_required(A.apk);
+             tl_log_line("unity: Vulkan %s (MoltenVK %s, manifest requires Vulkan: %s)", vk ? "on" : "off", A.vulkan[0] ? "present" : "absent", tl_manifest_vulkan_required(A.apk) ? "yes" : "no");
+-            if (vk) { setenv("TL_VK_TRACE", "1", 0); setenv("TL_THREAD_TRACE", "1", 0); tl_vk_configure(A.vulkan, NULL, 0); tl_egl_offscreen_windows(true); }
++            if (vk) { setenv("TL_VK_TRACE", "1", 0); setenv("TL_THREAD_TRACE", "1", 0); tl_sync_enable(true); tl_vk_configure(A.vulkan, NULL, 0); tl_egl_offscreen_windows(true); }
+         }
+         tl_audio_install();
+         ok = tl_unity_start(&cfg) && tl_unity_run();
