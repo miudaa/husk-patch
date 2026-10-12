@@ -1,0 +1,84 @@
+diff --git a/src/translation-layer-next/husk-tl-unity-app.c b/src/translation-layer-next/husk-tl-unity-app.c
+index b4213d8..5dcde41 100644
+--- a/src/translation-layer-next/husk-tl-unity-app.c
++++ b/src/translation-layer-next/husk-tl-unity-app.c
+@@ -170,6 +170,7 @@ static void stall_log_addr(const char *who, int i, uintptr_t a)
+ void tl_guest_threads_signal(int darwin_sig);
+ void tl_sync_enable(bool on);
+ void tl_vk_hide_display_timing(bool on);
++void tl_vk_trace_fences(bool on);
+ void tl_hle_set_unity_args(const char *args);
+ void tl_sync_dump(int n);
+ static void stall_dump_handler(int sig, siginfo_t *si, void *ctx)
+@@ -474,7 +475,7 @@ static void *launch_thread(void *arg)
+             void tl_egl_offscreen_windows(bool on);
+             bool vk = A.vulkan[0] && tl_manifest_vulkan_required(A.apk);
+             tl_log_line("unity: Vulkan %s (MoltenVK %s, manifest requires Vulkan: %s)", vk ? "on" : "off", A.vulkan[0] ? "present" : "absent", tl_manifest_vulkan_required(A.apk) ? "yes" : "no");
+-            if (vk) { if (!getenv("TL_VK_KEEP_DT")) tl_vk_hide_display_timing(true); setenv("TL_VK_TRACE", "1", 0); setenv("TL_THREAD_TRACE", "1", 0); setenv("TL_FILE_TRACE", "1", 0); tl_sync_enable(true);
++            if (vk) { if (!getenv("TL_VK_KEEP_DT")) tl_vk_hide_display_timing(true); tl_vk_trace_fences(true); setenv("TL_VK_TRACE", "1", 0); setenv("TL_THREAD_TRACE", "1", 0); setenv("TL_FILE_TRACE", "1", 0); tl_sync_enable(true);
+                 tl_hle_set_unity_args("-force-gfx-direct"); tl_vk_configure(A.vulkan, NULL, 0); tl_egl_offscreen_windows(true); }
+         }
+         tl_audio_install();
+diff --git a/src/translation-layer-next/husk-tl-vulkan.m b/src/translation-layer-next/husk-tl-vulkan.m
+index fb7c64e..f88bdf4 100644
+--- a/src/translation-layer-next/husk-tl-vulkan.m
++++ b/src/translation-layer-next/husk-tl-vulkan.m
+@@ -741,9 +741,58 @@ static const struct { const char *name; void *fn; } k_over[] = {
+     { "vkCmdBindVertexBuffers2EXT", w_vkCmdBindVertexBuffers2EXT },
+ };
+ 
++/* Fence calls noted in the sync ring (tl_vk_trace_fences): a game that stops after a few frames shows whether a fence it waits for ever signals. */
++static bool g_trace_fences;
++void tl_vk_trace_fences(bool on) { g_trace_fences = on; }
++void tl_sync_note(const char *kind, const void *addr, long a, long b);
++
++typedef int (*pfn_submit)(void *, uint32_t, const void *, uint64_t);
++static int w_vkQueueSubmit(void *queue, uint32_t n, const void *sub, uint64_t fence)
++{
++    static pfn_submit real;
++    if (!real && V.lib) real = (pfn_submit)dlsym(V.lib, "vkQueueSubmit");
++    tl_sync_note("vk-submit", (void *)(uintptr_t)fence, n, 0);
++    int r = real ? real(queue, n, sub, fence) : -3;
++    tl_sync_note("vk-submit-r", (void *)(uintptr_t)fence, r, 0);
++    return r;
++}
++typedef int (*pfn_waitfences)(void *, uint32_t, const uint64_t *, uint32_t, uint64_t);
++static int w_vkWaitForFences(void *device, uint32_t n, const uint64_t *fences, uint32_t all, uint64_t timeout)
++{
++    static pfn_waitfences real;
++    if (!real && V.lib) real = (pfn_waitfences)dlsym(V.lib, "vkWaitForFences");
++    const void *f0 = n && fences ? (const void *)(uintptr_t)fences[0] : NULL;
++    tl_sync_note("vk-wait", f0, n, timeout > 1000000000000000ull ? -1 : (long)(timeout / 1000000ull));
++    int r = real ? real(device, n, fences, all, timeout) : -3;
++    tl_sync_note("vk-wait-r", f0, r, 0);
++    return r;
++}
++typedef int (*pfn_fencestatus)(void *, uint64_t);
++static int w_vkGetFenceStatus(void *device, uint64_t fence)
++{
++    static pfn_fencestatus real;
++    if (!real && V.lib) real = (pfn_fencestatus)dlsym(V.lib, "vkGetFenceStatus");
++    int r = real ? real(device, fence) : -3;
++    tl_sync_note("vk-status", (void *)(uintptr_t)fence, r, 0);
++    return r;
++}
++typedef int (*pfn_resetfences)(void *, uint32_t, const uint64_t *);
++static int w_vkResetFences(void *device, uint32_t n, const uint64_t *fences)
++{
++    static pfn_resetfences real;
++    if (!real && V.lib) real = (pfn_resetfences)dlsym(V.lib, "vkResetFences");
++    tl_sync_note("vk-reset", n && fences ? (const void *)(uintptr_t)fences[0] : NULL, n, 0);
++    return real ? real(device, n, fences) : -3;
++}
++static const struct { const char *name; void *fn; } k_trace[] = {
++    { "vkQueueSubmit", w_vkQueueSubmit }, { "vkWaitForFences", w_vkWaitForFences },
++    { "vkGetFenceStatus", w_vkGetFenceStatus }, { "vkResetFences", w_vkResetFences },
++};
++
+ static void *overridden(const char *name)
+ {
+     for (size_t i = 0; i < sizeof(k_over) / sizeof(k_over[0]); i++) if (!strcmp(k_over[i].name, name)) return k_over[i].fn;
++    if (g_trace_fences) for (size_t i = 0; i < sizeof(k_trace) / sizeof(k_trace[0]); i++) if (!strcmp(k_trace[i].name, name)) return k_trace[i].fn;
+     return NULL;
+ }
+ 
