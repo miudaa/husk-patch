@@ -1,0 +1,110 @@
+diff --git a/src/translation-layer-next/husk-tl-bionic-pthread.c b/src/translation-layer-next/husk-tl-bionic-pthread.c
+index 165ffc2..050b6e8 100644
+--- a/src/translation-layer-next/husk-tl-bionic-pthread.c
++++ b/src/translation-layer-next/husk-tl-bionic-pthread.c
+@@ -427,6 +427,32 @@ void tl_thread_altstack(void)
+     stack_t ss = { .ss_sp = malloc(64 << 10), .ss_size = 64 << 10, .ss_flags = 0 };
+     if (ss.ss_sp) sigaltstack(&ss, NULL);
+ }
++/* The threads the game started and that are still running, so a diagnostic can signal them all (tl_guest_threads_signal). */
++#define GT_MAX 256
++static struct { pthread_t t; bool used; } g_gt[GT_MAX];
++static pthread_mutex_t g_gt_mu = PTHREAD_MUTEX_INITIALIZER;
++static int gt_add(void)
++{
++    int slot = -1;
++    pthread_mutex_lock(&g_gt_mu);
++    for (int i = 0; i < GT_MAX; i++) if (!g_gt[i].used) { g_gt[i].used = true; g_gt[i].t = pthread_self(); slot = i; break; }
++    pthread_mutex_unlock(&g_gt_mu);
++    return slot;
++}
++static void gt_del(int slot)
++{
++    if (slot < 0) return;
++    pthread_mutex_lock(&g_gt_mu);
++    g_gt[slot].used = false;
++    pthread_mutex_unlock(&g_gt_mu);
++}
++void tl_guest_threads_signal(int darwin_sig);
++void tl_guest_threads_signal(int darwin_sig)
++{
++    pthread_mutex_lock(&g_gt_mu);
++    for (int i = 0; i < GT_MAX; i++) if (g_gt[i].used && !pthread_equal(g_gt[i].t, pthread_self())) pthread_kill(g_gt[i].t, darwin_sig);
++    pthread_mutex_unlock(&g_gt_mu);
++}
+ static void *start_thunk(void *p)
+ {
+     start_ctx c = *(start_ctx *)p;
+@@ -440,7 +466,9 @@ static void *start_thunk(void *p)
+         const char *sym = tl_ld_symbol_at((const void *)c.fn, &ln, &sa);
+         tl_log_line("thread: started, entry %s %s+%#lx", ln ? ln : "?", sym ? sym : "?", sa ? (unsigned long)((const char *)c.fn - (const char *)sa) : 0ul);
+     }
++    int slot = gt_add();
+     void *r = c.fn(c.arg);
++    gt_del(slot);
+     if (g_thread_trace) { char nm[32] = ""; pthread_getname_np(pthread_self(), nm, sizeof(nm)); tl_log_line("thread: '%s' EXITED", nm); }
+     return r;
+ }
+diff --git a/src/translation-layer-next/husk-tl-unity-app.c b/src/translation-layer-next/husk-tl-unity-app.c
+index 9b65123..503698b 100644
+--- a/src/translation-layer-next/husk-tl-unity-app.c
++++ b/src/translation-layer-next/husk-tl-unity-app.c
+@@ -159,14 +159,15 @@ static void guest_exit(int status)
+ 
+ /* A frozen engine: its thread is sent SIGUSR2 and says where it is -- the program counter, the link register and the frame-pointer chain, as library + offset
+  * for guest code (the offset is the address in the library's own file, so it can be looked up in the unpacked .so) and as a symbol for the host's. */
+-static void stall_log_addr(int i, uintptr_t a)
++static void stall_log_addr(const char *who, int i, uintptr_t a)
+ {
+     tl_lib *L = tl_ld_lib_of((const void *)a);
+-    if (L) { tl_log_line("unity: stall: #%d %s +%#lx", i, tl_ld_lib_name(L), (unsigned long)(a - (uintptr_t)tl_ld_lib_base(L))); return; }
++    if (L) { tl_log_line("unity: stall[%s]: #%d %s +%#lx", who, i, tl_ld_lib_name(L), (unsigned long)(a - (uintptr_t)tl_ld_lib_base(L))); return; }
+     Dl_info di;
+-    if (dladdr((const void *)a, &di) && di.dli_sname) tl_log_line("unity: stall: #%d host %s +%#lx", i, di.dli_sname, (unsigned long)(a - (uintptr_t)di.dli_saddr));
+-    else tl_log_line("unity: stall: #%d %#lx", i, (unsigned long)a);
++    if (dladdr((const void *)a, &di) && di.dli_sname) tl_log_line("unity: stall[%s]: #%d host %s +%#lx", who, i, di.dli_sname, (unsigned long)(a - (uintptr_t)di.dli_saddr));
++    else tl_log_line("unity: stall[%s]: #%d %#lx", who, i, (unsigned long)a);
+ }
++void tl_guest_threads_signal(int darwin_sig);
+ static void stall_dump_handler(int sig, siginfo_t *si, void *ctx)
+ {
+     (void)sig; (void)si;
+@@ -175,14 +176,16 @@ static void stall_dump_handler(int sig, siginfo_t *si, void *ctx)
+     uintptr_t pc = (uintptr_t)__darwin_arm_thread_state64_get_pc(uc->uc_mcontext->__ss);
+     uintptr_t lr = (uintptr_t)__darwin_arm_thread_state64_get_lr(uc->uc_mcontext->__ss);
+     uintptr_t fp = (uintptr_t)__darwin_arm_thread_state64_get_fp(uc->uc_mcontext->__ss);
+-    tl_log_line("unity: stall: the engine thread is at:");
+-    stall_log_addr(0, pc);
+-    stall_log_addr(1, lr);
++    char who[32] = "";
++    pthread_getname_np(pthread_self(), who, sizeof(who));
++    if (!who[0]) snprintf(who, sizeof(who), "%p", (void *)pthread_self());
++    stall_log_addr(who, 0, pc);
++    stall_log_addr(who, 1, lr);
+     uintptr_t prev = 0;
+     for (int i = 2; i < 26 && fp && !(fp & 7) && fp > 0x100000 && fp > prev && (!prev || fp - prev < (1u << 20)); i++) {
+         uintptr_t ret = ((uintptr_t *)fp)[1];
+         if (!ret) break;
+-        stall_log_addr(i, ret);
++        stall_log_addr(who, i, ret);
+         prev = fp;
+         fp = ((uintptr_t *)fp)[0];
+     }
+@@ -219,7 +222,7 @@ static void *heartbeat_thread(void *arg)
+         if (A.engine == ENGINE_UNITY && f > 0) {
+             struct timespec now; clock_gettime(CLOCK_MONOTONIC, &now);
+             double still = (now.tv_sec - moved.tv_sec) + (now.tv_nsec - moved.tv_nsec) / 1e9;
+-            if ((stall_dumps == 0 && still >= 8) || (stall_dumps == 1 && still >= 20)) { stall_dumps++; tl_log_line("unity: stall: no frame for %.0f s", still); tl_unity_poke(SIGUSR2); }
++            if ((stall_dumps == 0 && still >= 8) || (stall_dumps == 1 && still >= 20)) { stall_dumps++; tl_log_line("unity: stall: no frame for %.0f s; every thread of the game says where it is", still); tl_unity_poke(SIGUSR2); usleep(50000); tl_guest_threads_signal(SIGUSR2); }
+         }
+         { extern volatile struct { uint64_t count, x21, impl, mask; } tl_va_clobber;
+           static uint64_t seen;
+@@ -454,7 +457,7 @@ static void *launch_thread(void *arg)
+             void tl_egl_offscreen_windows(bool on);
+             bool vk = A.vulkan[0] && tl_manifest_vulkan_required(A.apk);
+             tl_log_line("unity: Vulkan %s (MoltenVK %s, manifest requires Vulkan: %s)", vk ? "on" : "off", A.vulkan[0] ? "present" : "absent", tl_manifest_vulkan_required(A.apk) ? "yes" : "no");
+-            if (vk) { setenv("TL_VK_TRACE", "1", 0); tl_vk_configure(A.vulkan, NULL, 0); tl_egl_offscreen_windows(true); }
++            if (vk) { setenv("TL_VK_TRACE", "1", 0); setenv("TL_THREAD_TRACE", "1", 0); tl_vk_configure(A.vulkan, NULL, 0); tl_egl_offscreen_windows(true); }
+         }
+         tl_audio_install();
+         ok = tl_unity_start(&cfg) && tl_unity_run();
