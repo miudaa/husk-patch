@@ -1,0 +1,15 @@
+diff --git a/src/translation-layer-next/husk-tl-jni-hle.c b/src/translation-layer-next/husk-tl-jni-hle.c
+index 248fb61..d4cff5c 100644
+--- a/src/translation-layer-next/husk-tl-jni-hle.c
++++ b/src/translation-layer-next/husk-tl-jni-hle.c
+@@ -216,8 +216,9 @@ static void PM_getApplicationInfo(tl_jcall *c) { c->ret = vl(H.appinfo); }
+ static void PM_hasSystemFeature(tl_jcall *c)
+ {
+     const char *f = S(c->args[0].l);
++    /* Unity asks on the first touch whether there is a touch screen and ignores touches if told there is not. */
+     c->ret = vz(!strcmp(f, "android.hardware.touchscreen") || !strcmp(f, "android.hardware.touchscreen.multitouch")
+-             || !strcmp(f, "android.hardware.opengles.aep") || !strncmp(f, "android.hardware.vulkan", 23) ? 0 : 0);
++             || !strcmp(f, "android.hardware.touchscreen.multitouch.distinct") || !strcmp(f, "android.hardware.faketouch"));
+ }
+ static void PM_getPackageInfo(tl_jcall *c)
+ {
