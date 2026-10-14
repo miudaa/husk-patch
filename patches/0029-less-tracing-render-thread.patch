@@ -1,0 +1,19 @@
+diff --git a/src/translation-layer-next/husk-tl-unity-app.c b/src/translation-layer-next/husk-tl-unity-app.c
+index 248b2be..4f7720a 100644
+--- a/src/translation-layer-next/husk-tl-unity-app.c
++++ b/src/translation-layer-next/husk-tl-unity-app.c
+@@ -491,8 +491,12 @@ static void *launch_thread(void *arg)
+             void tl_egl_offscreen_windows(bool on);
+             vk = A.vulkan[0] && tl_manifest_vulkan_required(A.apk);
+             tl_log_line("unity: Vulkan %s (MoltenVK %s, manifest requires Vulkan: %s)", vk ? "on" : "off", A.vulkan[0] ? "present" : "absent", tl_manifest_vulkan_required(A.apk) ? "yes" : "no");
+-            if (vk) { if (!getenv("TL_VK_KEEP_DT")) tl_vk_hide_display_timing(true); tl_vk_trace_fences(true); setenv("TL_VK_TRACE", "1", 0); setenv("TL_THREAD_TRACE", "1", 0); setenv("TL_FILE_TRACE", "1", 0); tl_sync_enable(true);
+-                tl_hle_set_unity_args("-force-gfx-direct"); tl_vk_configure(A.vulkan, NULL, 0); tl_egl_offscreen_windows(true); }
++            /* The traces below (every fence call, every futex/condvar event, every file open) cost frame time: a run is slow with them on, so they are for when asked (TL_DIAG). */
++            if (vk) { if (!getenv("TL_VK_KEEP_DT")) tl_vk_hide_display_timing(true);
++                if (getenv("TL_DIAG")) { tl_vk_trace_fences(true); setenv("TL_VK_TRACE", "1", 0); setenv("TL_THREAD_TRACE", "1", 0); setenv("TL_FILE_TRACE", "1", 0); tl_sync_enable(true); }
++                /* -force-gfx-direct kept rendering on the engine thread; the stall it was tried against was Swappy's (bypassed below), so the engine's render thread is back unless TL_GFX_DIRECT asks. */
++                if (getenv("TL_GFX_DIRECT")) tl_hle_set_unity_args("-force-gfx-direct");
++                tl_vk_configure(A.vulkan, NULL, 0); tl_egl_offscreen_windows(true); }
+         }
+         /* A game that ships its own FMOD (libfmod.so, apart from the engine's) reaches its output through the Java class org.fmod.AudioDevice; without an
+          * implementation that init fails and the game's FMOD stays silent. */

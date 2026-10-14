@@ -35,6 +35,7 @@ Husk は GPL-2.0-or-later です。このリポジトリにはパッチ（`patch
 | `patches/0026-fmod-java-output-for-unity.patch` | 修正案。太鼓の音が出ない件。ゲーム自前の FMOD（libfmod.so）は Java の `org.fmod.AudioDevice` 経由で出力するのに、Unity の経路ではその実装（`tl_fmod_install`）が入っていなかったため出力の初期化が失敗していた。Unity でも入れる。あわせて OpenSL の Enqueue の引数をログに出す。 |
 | `patches/0027-integer-parseint-cri-buffer.patch` | 修正案。太鼓の音（CRI）が出ない件の本命。`Integer.parseInt` が未実装で常に 0 を返し、CRI が AudioManager の「フレーム数/バッファ」の文字列を数にできず、OpenSL のバッファが 0 バイトになっていた（無音のまま CPU 全開で回り続けていた）。実装する。0 バイトのバッファで回り続けないようにもする。 |
 | `patches/0028-audiomanager-constants.patch` | 修正案。太鼓の音（CRI）。CRI は `AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER` を static フィールドで読んで `getProperty` に渡すが、そのフィールドが null だったため答えも null になり、`parseInt(null)` が例外を出していた（0027 の後でも 0 バイトのまま）。`PROPERTY_*` と `GET_DEVICES_*` の定数を定義する。 |
+| `patches/0029-less-tracing-render-thread.patch` | 軽くする。診断用のトレース（フェンス・futex/condvar・ファイルアクセスの全記録）を既定でオフにし（`TL_DIAG` で戻せる）、`-force-gfx-direct` もやめて Unity の描画スレッドを戻す（止まる原因は Swappy だったので）。 |
 
 ## IPA の作り方
 
