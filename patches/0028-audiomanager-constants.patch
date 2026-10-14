@@ -1,0 +1,22 @@
+diff --git a/src/translation-layer-next/husk-tl-jni-hle.c b/src/translation-layer-next/husk-tl-jni-hle.c
+index efe746e..aad8223 100644
+--- a/src/translation-layer-next/husk-tl-jni-hle.c
++++ b/src/translation-layer-next/husk-tl-jni-hle.c
+@@ -401,6 +401,17 @@ static void install_build(void)
+     v.j = 0; v.l = STR("mounted"); tl_jni_set_static("android/os/Environment", "MEDIA_MOUNTED", "Ljava/lang/String;", v);
+     v.l = STR("location"); tl_jni_set_static("android/content/Context", "LOCATION_SERVICE", "Ljava/lang/String;", v);
+     v.l = STR("window"); tl_jni_set_static("android/content/Context", "WINDOW_SERVICE", "Ljava/lang/String;", v);
++    /* AudioManager's constants: a library reads PROPERTY_OUTPUT_FRAMES_PER_BUFFER as a static field and asks getProperty with it; null made the answer null, and
++     * CRI's Integer.parseInt of it threw, so its OpenSL buffers were zero bytes. */
++    v.l = STR("android.media.property.OUTPUT_SAMPLE_RATE"); tl_jni_set_static("android/media/AudioManager", "PROPERTY_OUTPUT_SAMPLE_RATE", "Ljava/lang/String;", v);
++    v.l = STR("android.media.property.OUTPUT_FRAMES_PER_BUFFER"); tl_jni_set_static("android/media/AudioManager", "PROPERTY_OUTPUT_FRAMES_PER_BUFFER", "Ljava/lang/String;", v);
++    v.l = STR("android.media.property.SUPPORT_MIC_NEAR_ULTRASOUND"); tl_jni_set_static("android/media/AudioManager", "PROPERTY_SUPPORT_MIC_NEAR_ULTRASOUND", "Ljava/lang/String;", v);
++    v.l = STR("android.media.property.SUPPORT_SPEAKER_NEAR_ULTRASOUND"); tl_jni_set_static("android/media/AudioManager", "PROPERTY_SUPPORT_SPEAKER_NEAR_ULTRASOUND", "Ljava/lang/String;", v);
++    v.j = 0; v.i = 1; tl_jni_set_static("android/media/AudioManager", "GET_DEVICES_INPUTS", "I", v);
++    v.j = 0; v.i = 2; tl_jni_set_static("android/media/AudioManager", "GET_DEVICES_OUTPUTS", "I", v);
++    v.j = 0; v.i = 3; tl_jni_set_static("android/media/AudioManager", "GET_DEVICES_ALL", "I", v);
++    v.j = 0; v.l = STR("android.hardware.audio.low_latency"); tl_jni_set_static("android/content/pm/PackageManager", "FEATURE_AUDIO_LOW_LATENCY", "Ljava/lang/String;", v);
++    v.l = STR("android.hardware.audio.pro"); tl_jni_set_static("android/content/pm/PackageManager", "FEATURE_AUDIO_PRO", "Ljava/lang/String;", v);
+     v.l = STR("audio"); tl_jni_set_static("android/content/Context", "AUDIO_SERVICE", "Ljava/lang/String;", v);
+     v.l = STR("input_method"); tl_jni_set_static("android/content/Context", "INPUT_METHOD_SERVICE", "Ljava/lang/String;", v);
+     v.l = STR("sensor"); tl_jni_set_static("android/content/Context", "SENSOR_SERVICE", "Ljava/lang/String;", v);
