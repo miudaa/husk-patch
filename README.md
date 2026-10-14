@@ -38,6 +38,7 @@ Husk は GPL-2.0-or-later です。このリポジトリにはパッチ（`patch
 | `patches/0029-less-tracing-render-thread.patch` | 軽くする。診断用のトレース（フェンス・futex/condvar・ファイルアクセスの全記録）を既定でオフにし（`TL_DIAG` で戻せる）、`-force-gfx-direct` もやめて Unity の描画スレッドを戻す（止まる原因は Swappy だったので）。 |
 | `patches/0030-unity-back-button.patch` | 機能追加。Unity のゲームの画面右上に、小さな半透明の戻るボタンを出す。押すと Android の Back キー（KEYCODE_BACK、ゲームでは Escape に当たる）を送る。 |
 | `patches/0031-trace-back-key.patch` | 診断用。戻るボタンが押されたことと、最初の2回について Unity が KeyEvent に対して行う Java 呼び出しをログに出す。 |
+| `patches/0032-back-sends-escape.patch` | 修正案。戻るボタンが Unity に届いても何も起きなかった（ログで KEYCODE_BACK は getKeyCode の後で捨てられていた）ので、Back の代わりに KEYCODE_ESCAPE（ゲームの Escape キー）を送る。 |
 
 ## IPA の作り方
 
