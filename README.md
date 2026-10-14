@@ -37,6 +37,7 @@ Husk は GPL-2.0-or-later です。このリポジトリにはパッチ（`patch
 | `patches/0028-audiomanager-constants.patch` | 修正案。太鼓の音（CRI）。CRI は `AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER` を static フィールドで読んで `getProperty` に渡すが、そのフィールドが null だったため答えも null になり、`parseInt(null)` が例外を出していた（0027 の後でも 0 バイトのまま）。`PROPERTY_*` と `GET_DEVICES_*` の定数を定義する。 |
 | `patches/0029-less-tracing-render-thread.patch` | 軽くする。診断用のトレース（フェンス・futex/condvar・ファイルアクセスの全記録）を既定でオフにし（`TL_DIAG` で戻せる）、`-force-gfx-direct` もやめて Unity の描画スレッドを戻す（止まる原因は Swappy だったので）。 |
 | `patches/0030-unity-back-button.patch` | 機能追加。Unity のゲームの画面右上に、小さな半透明の戻るボタンを出す。押すと Android の Back キー（KEYCODE_BACK、ゲームでは Escape に当たる）を送る。 |
+| `patches/0031-trace-back-key.patch` | 診断用。戻るボタンが押されたことと、最初の2回について Unity が KeyEvent に対して行う Java 呼び出しをログに出す。 |
 
 ## IPA の作り方
 

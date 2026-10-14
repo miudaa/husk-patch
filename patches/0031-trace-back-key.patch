@@ -1,0 +1,20 @@
+diff --git a/src/translation-layer-next/husk-tl-unity.c b/src/translation-layer-next/husk-tl-unity.c
+index 6babcb9..ad8f6fb 100644
+--- a/src/translation-layer-next/husk-tl-unity.c
++++ b/src/translation-layer-next/husk-tl-unity.c
+@@ -283,10 +283,15 @@ extern jobj *tl_input_key_event(int action, int keycode, int device, int source,
+ /* The Back key (KEYCODE_BACK): a game maps it to Escape. There is no key on an iPhone to send it, so the app draws a button. */
+ void tl_unity_back(void)
+ {
++    static int presses;
++    bool trace = presses++ < 2;
++    tl_log_line("unity: Back pressed (#%d)", presses);
++    if (trace) tl_jni_set_trace(2);                  /* what the engine asks of the key event, and what it is told */
+     int64_t now = uptime_ms();
+     inject(tl_input_key_event(0 /* ACTION_DOWN */, 4 /* KEYCODE_BACK */, 0, 0x101 /* SOURCE_KEYBOARD */, 0, now, now));
+     usleep(50000);
+     inject(tl_input_key_event(1 /* ACTION_UP */, 4, 0, 0x101, 0, now, now + 50));
++    if (trace) tl_jni_set_trace(0);
+ }
+ 
+ void tl_unity_register_pad_sink(void)
