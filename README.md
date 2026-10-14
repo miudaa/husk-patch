@@ -33,6 +33,7 @@ Husk は GPL-2.0-or-later です。このリポジトリにはパッチ（`patch
 | `patches/0024-audio-source-summaries.patch` | 診断用。OpenSL ES のプレイヤーと AAudio のストリームごとに、数秒おきに「何バッファ流れて、音が入っていたか（最大の振幅）」をログに出す（太鼓の音が出ているのに聞こえないのか、ゲームが音を出していないのかを分ける）。 |
 | `patches/0025-aaudio-lifecycle-notes.patch` | 診断用。AAudio ストリームの open/start/stop/close と、write 型ストリーム（FMOD が使う）の呼び出し回数・拒否回数・音の有無、OpenSL ES の最初のバッファの大きさと200バッファにかかった時間をログに出す。 |
 | `patches/0026-fmod-java-output-for-unity.patch` | 修正案。太鼓の音が出ない件。ゲーム自前の FMOD（libfmod.so）は Java の `org.fmod.AudioDevice` 経由で出力するのに、Unity の経路ではその実装（`tl_fmod_install`）が入っていなかったため出力の初期化が失敗していた。Unity でも入れる。あわせて OpenSL の Enqueue の引数をログに出す。 |
+| `patches/0027-integer-parseint-cri-buffer.patch` | 修正案。太鼓の音（CRI）が出ない件の本命。`Integer.parseInt` が未実装で常に 0 を返し、CRI が AudioManager の「フレーム数/バッファ」の文字列を数にできず、OpenSL のバッファが 0 バイトになっていた（無音のまま CPU 全開で回り続けていた）。実装する。0 バイトのバッファで回り続けないようにもする。 |
 
 ## IPA の作り方
 

@@ -1,0 +1,48 @@
+diff --git a/src/translation-layer-next/husk-tl-jni-hle.c b/src/translation-layer-next/husk-tl-jni-hle.c
+index ca49b3e..efe746e 100644
+--- a/src/translation-layer-next/husk-tl-jni-hle.c
++++ b/src/translation-layer-next/husk-tl-jni-hle.c
+@@ -473,6 +473,16 @@ static void System_loadLibrary(tl_jcall *c)
+         tl_jni_throw("java/lang/UnsatisfiedLinkError", msg);
+     }
+ }
++/* Integer.parseInt: CRI parses AudioManager's "frames per buffer" string with it, and an answer of zero made its OpenSL buffers zero bytes long. */
++static void Integer_parseInt(tl_jcall *c)
++{
++    const char *t = c->args[0].l ? S(c->args[0].l) : NULL;
++    if (!t || !*t) { tl_jni_throw("java/lang/NumberFormatException", t ? "" : "null"); c->ret.i = 0; return; }
++    char *end = NULL; long v = strtol(t, &end, c->args[1].i > 1 ? c->args[1].i : 10);
++    if (*end) { tl_jni_throw("java/lang/NumberFormatException", t); c->ret.i = 0; return; }
++    c->ret = vi((int)v);
++}
++static void Integer_parseInt1(tl_jcall *c) { jvalue a[2]; a[0] = c->args[0]; a[1].j = 0; a[1].i = 10; tl_jcall d = *c; d.args = a; Integer_parseInt(&d); c->ret = d.ret; }
+ static void System_getProperty(tl_jcall *c) { const char *k = S(c->args[0].l); const char *v = !strcmp(k, "os.arch") ? "aarch64" : !strcmp(k, "http.agent") ? "Dalvik/2.1.0 (Linux; U; Android 14; Pixel 8)" : NULL; c->ret = vl(v ? STR(v) : NULL); }
+ static void System_currentTimeMillis(tl_jcall *c) { struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); jvalue v; v.j = (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000; c->ret = v; }
+ static void System_nanoTime(tl_jcall *c) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); jvalue v; v.j = (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec; c->ret = v; }
+@@ -955,6 +965,7 @@ static const tl_jhle k_hle[] = {
+     M("java/lang/String", "isEmpty", "()Z", String_isEmpty),
+     M("java/lang/String", "hashCode", "()I", String_hashCode),
+     M("java/lang/System", "getProperty", "(Ljava/lang/String;)Ljava/lang/String;", System_getProperty),
++    M("java/lang/Integer", "parseInt", "(Ljava/lang/String;)I", Integer_parseInt1), M("java/lang/Integer", "parseInt", "(Ljava/lang/String;I)I", Integer_parseInt),
+     M("java/lang/System", "currentTimeMillis", "()J", System_currentTimeMillis),
+     M("java/lang/System", "nanoTime", "()J", System_nanoTime),
+     M("java/io/File", "<init>", "(Ljava/lang/String;)V", File_init_s),
+diff --git a/src/translation-layer-next/husk-tl-opensles.c b/src/translation-layer-next/husk-tl-opensles.c
+index 217221d..2023ec1 100644
+--- a/src/translation-layer-next/husk-tl-opensles.c
++++ b/src/translation-layer-next/husk-tl-opensles.c
+@@ -190,6 +190,14 @@ static void *player_pump(void *arg)
+         if (o->qcount > 0) { data = o->q[o->qhead].data; size = o->q[o->qhead].size; }
+         pthread_mutex_unlock(&o->mu);
+         if (!data) { usleep(1000); continue; }
++        if (size == 0) {                       /* an empty buffer is finished at once; without a pause its callback queues another empty one, and this thread spins at full speed */
++            pthread_mutex_lock(&o->mu);
++            if (o->qcount > 0) { o->qhead = (o->qhead + 1) % MAX_QUEUE; o->qcount--; o->qindex++; }
++            pthread_mutex_unlock(&o->mu);
++            usleep(2000);
++            if (o->bq_cb) o->bq_cb(&o->vt_bq, o->bq_ctx);
++            continue;
++        }
+         int ch = o->channels > 0 ? o->channels : 2, rate = o->rate > 0 ? o->rate : 48000;
+         int frames = (int)(size / (2u * (uint32_t)ch));
+         {   /* what the game is putting out: a summary of this player every few seconds (a silent game and a silent player look alike from outside) */
