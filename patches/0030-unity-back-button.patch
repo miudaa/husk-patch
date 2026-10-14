@@ -1,0 +1,99 @@
+diff --git a/src/app/Husk/TLUnityView.swift b/src/app/Husk/TLUnityView.swift
+index cb73e19..0811e7e 100644
+--- a/src/app/Husk/TLUnityView.swift
++++ b/src/app/Husk/TLUnityView.swift
+@@ -59,6 +59,8 @@ final class TLUnityUIView: UIView, UIKeyInput {
+     /// mean time one frame takes it. Refreshed once a second from the runtime's own counters.
+     private let stats = UILabel()
+     private var statsTimer: Timer?
++    /// A Unity game's Back key (the phone has none): a small translucent button in the top right corner.
++    private let backButton = UIButton(type: .system)
+ 
+     /// Called when three fingers tap at once: the way back to the interface while it is hidden.
+     var onThreeFingerTap: (() -> Void)?
+@@ -97,6 +99,15 @@ final class TLUnityUIView: UIView, UIKeyInput {
+         stats.isUserInteractionEnabled = false
+         stats.text = " "
+         if engine == .unity { addSubview(stats) }
++        if engine == .unity {
++            backButton.setImage(UIImage(systemName: "chevron.backward"), for: .normal)
++            backButton.tintColor = .white
++            backButton.backgroundColor = UIColor.black.withAlphaComponent(0.4)
++            backButton.layer.cornerRadius = 14
++            backButton.alpha = 0.6
++            backButton.addAction(UIAction { _ in husk_unity_back() }, for: .touchUpInside)
++            addSubview(backButton)
++        }
+         if engine == .cocos {
+             TLUnityUIView.cocosView = self
+             TLUnityUIView.installKeyboardHandler()
+@@ -206,6 +217,8 @@ final class TLUnityUIView: UIView, UIKeyInput {
+     override func layoutSubviews() {
+         super.layoutSubviews()
+         stats.frame = CGRect(x: bounds.width - 148, y: bounds.height - 22, width: 142, height: 16)
++        backButton.frame = CGRect(x: bounds.width - safeAreaInsets.right - 50, y: safeAreaInsets.top + 6, width: 44, height: 28)
++        bringSubviewToFront(backButton)
+         if let webHost, webHost.frame != frame { webHost.frame = frame }
+         guard bounds.width > 0, bounds.height > 0 else { return }
+         let w = Int((bounds.width * contentScaleFactor).rounded())
+diff --git a/src/translation-layer-next/husk-tl-unity-app.c b/src/translation-layer-next/husk-tl-unity-app.c
+index 4f7720a..28f2ff5 100644
+--- a/src/translation-layer-next/husk-tl-unity-app.c
++++ b/src/translation-layer-next/husk-tl-unity-app.c
+@@ -751,6 +751,11 @@ void husk_unity_touch(int phase, int id, float x, float y)
+     else if (A.engine == ENGINE_GAMEACTIVITY) tl_ga_touch(phase, id, x, y);
+     else if (A.engine == ENGINE_COCOS) tl_cocos_touch(phase, id, x, y); else tl_unity_touch(phase, id, x, y);
+ }
++void husk_unity_back(void)
++{
++    if (atomic_load(&A.state) != HUSK_UNITY_RUNNING || A.engine != ENGINE_UNITY) return;
++    tl_unity_back();
++}
+ void husk_unity_set_paused(bool paused)
+ {
+     if (atomic_load(&A.state) != HUSK_UNITY_RUNNING) return;
+diff --git a/src/translation-layer-next/husk-tl-unity-app.h b/src/translation-layer-next/husk-tl-unity-app.h
+index 871080b..ce01fda 100644
+--- a/src/translation-layer-next/husk-tl-unity-app.h
++++ b/src/translation-layer-next/husk-tl-unity-app.h
+@@ -156,6 +156,7 @@ unsigned long husk_unity_frames(void);
+ typedef struct husk_unity_perf { double fps, mean_ms, max_ms; } husk_unity_perf;
+ void husk_unity_perf_snapshot(husk_unity_perf *out);          /* since the last call */
+ void husk_unity_touch(int phase, int id, float x, float y);   /* phase 0 down, 1 move, 2 up, 3 cancel */
++void husk_unity_back(void);                                   /* Android's Back key (Unity games) */
+ void husk_unity_set_paused(bool paused);
+ 
+ /* The app's package name from its manifest into `out`; false if it cannot be read. */
+diff --git a/src/translation-layer-next/husk-tl-unity.c b/src/translation-layer-next/husk-tl-unity.c
+index eb4b1d8..6babcb9 100644
+--- a/src/translation-layer-next/husk-tl-unity.c
++++ b/src/translation-layer-next/husk-tl-unity.c
+@@ -279,6 +279,16 @@ static void pad_key(jobj *ev, int device, int action, int keycode, int64_t down_
+ static void pad_motion(jobj *ev, int device, int source, int64_t down_ms, int64_t event_ms)
+ { (void)device; (void)source; (void)down_ms; (void)event_ms; inject(ev); }
+ 
++extern jobj *tl_input_key_event(int action, int keycode, int device, int source, int repeat, int64_t down_ms, int64_t event_ms);
++/* The Back key (KEYCODE_BACK): a game maps it to Escape. There is no key on an iPhone to send it, so the app draws a button. */
++void tl_unity_back(void)
++{
++    int64_t now = uptime_ms();
++    inject(tl_input_key_event(0 /* ACTION_DOWN */, 4 /* KEYCODE_BACK */, 0, 0x101 /* SOURCE_KEYBOARD */, 0, now, now));
++    usleep(50000);
++    inject(tl_input_key_event(1 /* ACTION_UP */, 4, 0, 0x101, 0, now, now + 50));
++}
++
+ void tl_unity_register_pad_sink(void)
+ {
+     static const tl_pad_sink sink = { pad_key, pad_motion };
+diff --git a/src/translation-layer-next/husk-tl-unity.h b/src/translation-layer-next/husk-tl-unity.h
+index 0531584..8004f7d 100644
+--- a/src/translation-layer-next/husk-tl-unity.h
++++ b/src/translation-layer-next/husk-tl-unity.h
+@@ -44,6 +44,7 @@ unsigned long tl_unity_frames(void);
+ /* Send a connected controller's buttons and sticks to this engine (husk-tl-gamepad.h). */
+ void tl_unity_register_pad_sink(void);
+ void tl_unity_touch(int phase, int id, float x, float y);
++void tl_unity_back(void);                                      /* Android's Back key, down then up */
+ 
+ /* How the last stretch went: frames per second, and the mean and worst time inside one nativeRender call. Resets what it measured. */
+ typedef struct tl_unity_perf { double fps, mean_ms, max_ms; } tl_unity_perf;
